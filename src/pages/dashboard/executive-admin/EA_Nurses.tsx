@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
-import { Plus, Search, Edit, Trash2, HeartPulse, Phone } from "lucide-react";
+import { Plus, Search, Edit, Trash2, HeartPulse, Phone, Eye, EyeOff } from "lucide-react";
 import { createNurse, deleteNurse, listNurses, updateNurse, toggleNurseStatus } from "@/services/nurse.service";
 import { listOrganizations } from "@/services/organization.service";
 import { getUserPermissions } from "@/services/permission.service";
@@ -74,6 +74,7 @@ const EA_Nurses = () => {
   const [pendingNurse, setPendingNurse] = useState<any>(null);
   const [otp, setOtp] = useState("");
   const [step, setStep] = useState<"form" | "verify">("form");
+  const [showPassword, setShowPassword] = useState(false);
 
   // permissions
   const [permissions, setPermissions] = useState<string[]>([]);
@@ -465,14 +466,28 @@ const EA_Nurses = () => {
                     }
                   />
                 </div>
-                <Input
-                  placeholder="Password"
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
-                />
+                <div className="relative">
+                  <Input
+                    placeholder="Password"
+                    type={showPassword ? "text" : "password"}
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
 
                 {/* Organization */}
                 <Select

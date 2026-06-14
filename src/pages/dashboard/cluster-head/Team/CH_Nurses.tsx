@@ -7,6 +7,8 @@ import {
   Phone,
   Edit,
   Trash2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 import { viewOrganization } from "@/services/organization.service";
@@ -79,6 +81,7 @@ const CH_Nurses = () => {
   const [addStep, setAddStep] = useState<"form" | "verify">("form");
   const [addOtp, setAddOtp] = useState("");
   const [resendTimer, setResendTimer] = useState(0);
+  const [showPassword, setShowPassword] = useState(false);
   const [pendingNursePhone, setPendingNursePhone] = useState<{
     phone_country: string;
     phone_number: string;
@@ -482,14 +485,24 @@ const CH_Nurses = () => {
                   />
                 </div>
 
-                <Input
-                  placeholder="Password"
-                  type="password"
-                  value={addForm.password}
-                  onChange={(e) =>
-                    setAddForm({ ...addForm, password: e.target.value })
-                  }
-                />
+                <div className="relative">
+                  <Input
+                    placeholder="Password"
+                    type={showPassword ? "text" : "password"}
+                    value={addForm.password}
+                    onChange={(e) =>
+                      setAddForm({ ...addForm, password: e.target.value })
+                    }
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
 
                 {/* Device selection */}
                 <Popover>

@@ -35,6 +35,8 @@ import {
   Phone,
   KeyRound,
   RefreshCcw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -80,6 +82,7 @@ const EA_ClusterHeads = () => {
   const [createdPhone, setCreatedPhone] = useState("");
   const [permissions, setPermissions] = useState<string[]>([]);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -397,13 +400,22 @@ const EA_ClusterHeads = () => {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Secure Password</Label>
-                  <Input
-                    placeholder="••••••••"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="rounded-xl border-gray-200 h-11"
-                  />
+                  <div className="relative">
+                    <Input
+                      placeholder="••••••••"
+                      type={showPassword ? "text" : "password"}
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="rounded-xl border-gray-200 h-11 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
