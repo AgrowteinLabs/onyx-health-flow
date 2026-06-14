@@ -36,6 +36,7 @@ import TechnicianDashboard from "./pages/dashboard/technician/TechnicianDashboar
 import RoleManagement from "./pages/dashboard/super-admin/RoleManagement";
 import UserManagement from "./pages/dashboard/super-admin/UserManagement";
 import AuditLogs from "./pages/dashboard/super-admin/AuditLogs";
+import SA_ExecutiveAdmins from "./pages/dashboard/super-admin/SA_ExecutiveAdmins";
 
 /* =======================
    Executive Admin Pages
@@ -144,7 +145,7 @@ const App = () => (
             <Route path="/dashboard/super-admin" element={<SuperAdminDashboard />}>
               <Route index element={<RoleManagement />} />
               <Route path="roles" element={<RoleManagement />} />
-              <Route path="executives" element={<EA_ExecutiveAdmins />} />
+              <Route path="executives" element={<SA_ExecutiveAdmins />} />
               <Route path="users" element={<UserManagement />} />
               <Route path="audit" element={<AuditLogs />} />
             </Route>

@@ -13,7 +13,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -24,28 +23,19 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { Search, Shield } from "lucide-react";
-import { createExecAdmin, verifyExecAdmin, listExecutives, updateExecAdmin } from "@/services/executiveAdmin.service";
+import { listExecutives, updateExecAdmin } from "@/services/executiveAdmin.service";
 import { Switch } from "@/components/ui/switch";
 
 const EA_ExecutiveAdmins = () => {
   const { toast } = useToast();
-  const userRole = (localStorage.getItem("userRole") || "").replace(/_/g, "-");
   const [executives, setExecutives] = useState<any[]>([]);
   const [filteredExecutives, setFilteredExecutives] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
-  const [otpCode, setOtpCode] = useState("");
-
-  const [formData, setFormData] = useState({
-    name: "",
-    phone_country: "91",
-    phone_number: "",
-    password: "",
-    country: "India",
-  });
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmData, setConfirmData] = useState<{ id: string; currentStatus: string } | null>(null);
 
   // =============================
   // Fetch all Executive Admins
@@ -72,13 +62,6 @@ const EA_ExecutiveAdmins = () => {
     fetchExecutives();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // =============================
-  // Toggle & Status Filter States
-  // =============================
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmData, setConfirmData] = useState<{ id: string; currentStatus: string } | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all");
 
   const handleToggleStatus = (id: string, currentStatus?: string) => {
     setConfirmData({ id, currentStatus: currentStatus || "Active" });
@@ -119,70 +102,6 @@ const EA_ExecutiveAdmins = () => {
     setFilteredExecutives(list);
   }, [search, statusFilter, executives]);
 
-  // =============================
-  // Create Executive Admin
-  // =============================
-  const handleCreate = async () => {
-    const { name, phone_country, phone_number, password, country } = formData;
-
-    if (!name || !phone_number || !password) {
-      toast({
-        title: "Please fill all required fields",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      await createExecAdmin({
-        phone_number: [phone_country, phone_number],
-        password,
-        name,
-        country,
-      });
-
-      toast({
-        title: "OTP sent to the provided number",
-        description: "Enter the OTP to verify new Executive Admin",
-      });
-
-      setDialogOpen(false);
-      setOtpDialogOpen(true);
-    } catch (err) {
-      console.error(err);
-      toast({
-        title: "Failed to create Executive Admin",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // =============================
-  // Verify OTP
-  // =============================
-  const handleVerifyOtp = async () => {
-    if (!otpCode) {
-      toast({ title: "Please enter the OTP", variant: "destructive" });
-      return;
-    }
-
-    try {
-      await verifyExecAdmin({ otp: otpCode });
-      toast({ title: "Executive Admin verified successfully" });
-      setOtpDialogOpen(false);
-      setOtpCode("");
-
-      // Refresh list
-      fetchExecutives();
-    } catch (err) {
-      console.error(err);
-      toast({ title: "OTP verification failed", variant: "destructive" });
-    }
-  };
-
-  // =============================
-  // UI
-  // =============================
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       {/* Header */}
@@ -193,112 +112,10 @@ const EA_ExecutiveAdmins = () => {
             Executive Admins
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage and add Executive Admins in your network
+            Manage and view Executive Admins in your network
           </p>
         </div>
-
-        {userRole === "super-admin" && (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white rounded-[14px] border-none shadow-md shadow-[#F2052C]/20 hover:opacity-90">
-                Add Executive Admin
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[450px] rounded-[24px]">
-              <DialogHeader>
-                <DialogTitle className="text-xl font-extrabold text-[#14213D] flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-[#F2052C]" />
-                  Add Executive Admin
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 mt-2">
-                <div>
-                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Full Name</label>
-                  <Input
-                    placeholder="e.g. Rohan Mehta"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="rounded-[14px] border-slate-200 h-10"
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Country Code</label>
-                    <Input
-                      placeholder="91"
-                      value={formData.phone_country}
-                      onChange={(e) => setFormData({ ...formData, phone_country: e.target.value })}
-                      className="rounded-[14px] border-slate-200 h-10"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Phone Number</label>
-                    <Input
-                      placeholder="9876543210"
-                      value={formData.phone_number}
-                      onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
-                      className="rounded-[14px] border-slate-200 h-10"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Password</label>
-                  <Input
-                    type="password"
-                    placeholder="••••••••"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="rounded-[14px] border-slate-200 h-10"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Country</label>
-                  <Input
-                    placeholder="India"
-                    value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                    className="rounded-[14px] border-slate-200 h-10"
-                  />
-                </div>
-              </div>
-              <DialogFooter className="mt-4 flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setDialogOpen(false)} className="rounded-[14px]">
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleCreate}
-                  className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white rounded-[14px] border-none shadow-md shadow-[#F2052C]/20 hover:opacity-90"
-                >
-                  Create
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
       </div>
-
-      {/* OTP Dialog */}
-      <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Verify OTP</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <Input
-              placeholder="Enter 6-digit OTP"
-              value={otpCode}
-              onChange={(e) => setOtpCode(e.target.value)}
-              maxLength={6}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleVerifyOtp}>Verify</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Search Bar */}
       <div className="flex justify-end">
@@ -378,12 +195,12 @@ const EA_ExecutiveAdmins = () => {
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-1 text-xs rounded-full ${
-                            admin.status === "Active"
+                            admin.status === "Active" || !admin.status
                               ? "bg-green-100 text-green-700"
                               : "bg-gray-100 text-gray-700"
                           }`}
                         >
-                          {admin.status || "N/A"}
+                          {admin.status || "Active"}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-muted-foreground">
@@ -404,6 +221,7 @@ const EA_ExecutiveAdmins = () => {
           )}
         </CardContent>
       </Card>
+
       {/* Confirm Status Change Dialog */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="sm:max-w-[400px]">
