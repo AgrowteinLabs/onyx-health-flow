@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import StatCard from "@/components/dashboard/StatCard";
 import WelcomeBanner from "@/components/dashboard/WelcomeBanner";
@@ -22,8 +22,11 @@ import {
   Thermometer,
   ClipboardList,
   TrendingUp,
+  CreditCard,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 import { listOrganizations } from "@/services/organization.service";
 import { listDoctors } from "@/services/doctor.service";
@@ -74,6 +77,7 @@ const MetricBar = ({
 
 const ExecutiveAdminDashboard = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -89,6 +93,8 @@ const ExecutiveAdminDashboard = () => {
   const [orgOverview, setOrgOverview] = useState<
     { name: string; doctors: number; devices: number; status: string; code?: string; location?: string }[]
   >([]);
+
+  const [pendingDoctors, setPendingDoctors] = useState<any[]>([]);
 
   const isMainDashboard = location.pathname === "/dashboard/executive-admin";
 
@@ -149,6 +155,11 @@ const ExecutiveAdminDashboard = () => {
       });
 
       setOrgOverview(overview);
+
+      const pending = doctors.filter(
+        (d: any) => d.status === "Pending Verification"
+      );
+      setPendingDoctors(pending);
     } catch (err) {
       toast({ title: "Error fetching dashboard data", variant: "destructive" });
     } finally {
@@ -227,8 +238,8 @@ const ExecutiveAdminDashboard = () => {
 
           {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            {/* Organization Cards */}
-            <div className="lg:col-span-2 self-start">
+            {/* Left Content Area (Organizations + Approvals) */}
+            <div className="lg:col-span-2 space-y-5">
               <div className="bg-white/60 backdrop-blur-md rounded-[24px] border border-white/60 shadow-sm p-6">
                 <div className="flex items-center justify-between mb-5">
                   <h3 className="text-lg font-extrabold text-[#14213D]">
@@ -291,6 +302,65 @@ const ExecutiveAdminDashboard = () => {
                             <p className="text-lg font-extrabold text-[#35B7C9] leading-none">{org.devices}</p>
                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Devices</p>
                           </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Pending Verifications Widget */}
+              <div className="bg-white/60 backdrop-blur-md rounded-[24px] border border-white/60 shadow-sm p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-2">
+                    <Stethoscope className="h-5 w-5 text-[#F2052C]" />
+                    <h3 className="text-base font-extrabold text-[#14213D]">
+                      Pending Doctor Verifications
+                    </h3>
+                  </div>
+                  <Badge className="bg-[#F2052C]/10 text-[#F2052C] border-none font-bold text-[10px]">
+                    {pendingDoctors.length} Pending
+                  </Badge>
+                </div>
+
+                {loading ? (
+                  <div className="space-y-3">
+                    {[...Array(2)].map((_, i) => (
+                      <div key={i} className="h-14 rounded-xl bg-slate-100/50 animate-pulse" />
+                    ))}
+                  </div>
+                ) : pendingDoctors.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 font-semibold text-xs border border-dashed border-slate-200 rounded-xl">
+                    🎉 All registered doctors have been verified. No pending audits.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {pendingDoctors.slice(0, 3).map((doc, idx) => (
+                      <div
+                        key={doc._id || doc.id || idx}
+                        className="flex items-center justify-between p-4 rounded-[18px] bg-white/70 border border-slate-100 hover:bg-white transition-all cursor-pointer group"
+                        onClick={() => navigate("/dashboard/executive-admin/doctors")}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-[#F2052C] to-[#35B7C9] flex items-center justify-center text-white font-extrabold text-sm uppercase">
+                            {doc.name?.[0] || "D"}
+                          </div>
+                          <div>
+                            <p className="text-sm font-extrabold text-[#14213D] leading-snug group-hover:text-primary transition-colors">
+                              {doc.name}
+                            </p>
+                            <p className="text-xs text-slate-400 font-semibold mt-0.5">
+                              {doc.specialization || doc.specialty || "Specialist"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-extrabold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                            Pending Approval
+                          </span>
+                          <span className="text-xs text-primary font-bold hover:underline hidden sm:inline-block">
+                            Verify Details →
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -439,6 +509,51 @@ const ExecutiveAdminDashboard = () => {
                     <p className="text-xs text-white/50 font-bold mt-1">Organizations active across platform</p>
                   </div>
                 )}
+              </div>
+
+              {/* Financial Settlements Summary */}
+              <div className="bg-white/60 backdrop-blur-md rounded-[24px] border border-white/60 shadow-sm p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="h-5 w-5 text-emerald-500" />
+                    <h3 className="text-base font-extrabold text-[#14213D]">Razorpay Settlements</h3>
+                  </div>
+                  <Badge className="bg-emerald-50 text-emerald-600 border-none font-bold text-[9px]">Active Routing</Badge>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
+                    <span className="text-[10px] text-slate-400 block font-bold">Total Payouts</span>
+                    <span className="text-base font-extrabold text-[#14213D]">₹1,85,400</span>
+                  </div>
+                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
+                    <span className="text-[10px] text-slate-400 block font-bold">Pending Review</span>
+                    <span className="text-base font-extrabold text-amber-600">₹14,200</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Recent Linked Payouts</span>
+                  {[
+                    { doctor: "Dr. Sarah Jenkins", amount: "₹45,200", status: "Settled" },
+                    { doctor: "Dr. Robert Chen", amount: "₹32,000", status: "Settled" },
+                    { doctor: "Dr. Rohan Mehta", amount: "₹12,500", status: "Pending Approval" }
+                  ].map((pay, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-white/40 border border-white/50">
+                      <div>
+                        <p className="font-bold text-[#14213D]">{pay.doctor}</p>
+                        <p className="text-[9px] text-slate-400">Linked Node Payout</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-extrabold text-[#14213D]">{pay.amount}</p>
+                        <span className={cn(
+                          "text-[8px] font-extrabold",
+                          pay.status === "Settled" ? "text-emerald-500" : "text-amber-500"
+                        )}>{pay.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

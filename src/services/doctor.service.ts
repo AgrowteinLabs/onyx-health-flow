@@ -25,4 +25,33 @@ export const updateDoctor = async (id: string, payload: any) => {
     data: payload,
   });
 };
+
+export const submitOnboardingStep1 = async (payload: any) => {
+  return apiRequest("/api/doctor/onboarding/step1", {
+    method: "POST",
+    data: payload,
+  });
+};
+
+export const submitOnboardingStep2 = async (payload: any) => {
+  return apiRequest("/api/doctor/onboarding/step2", {
+    method: "POST",
+    data: payload,
+  });
+};
+
+export const submitOnboardingStep3 = async (payload: any) => {
+  return apiRequest("/api/doctor/onboarding/step3", {
+    method: "POST",
+    data: payload,
+  });
+};
+
+export const submitOnboardingStep4 = async (payload: any) => {
+  return apiRequest("/api/doctor/onboarding/step4", {
+    method: "POST",
+    data: payload,
+  });
+};
+
     
