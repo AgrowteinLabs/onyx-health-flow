@@ -61,6 +61,7 @@ import CH_TeamIndex from "./pages/dashboard/cluster-head/Team/CH_TeamIndex";
 import CH_UserHeads from "./pages/dashboard/cluster-head/Team/CH_UserHeads";
 import CH_Nurses from "./pages/dashboard/cluster-head/Team/CH_Nurses";
 import CH_Technicians from "./pages/dashboard/cluster-head/Team/CH_Technicians";
+import CHDoctors from "./pages/dashboard/cluster-head/Team/CH_Doctors";
 import CH_Devices from "./pages/dashboard/cluster-head/CH_Devices";
 import CH_Reports from "./pages/dashboard/cluster-head/CH_Reports";
 import CH_Consultations from "./pages/dashboard/cluster-head/CH_Consultations";
@@ -79,6 +80,7 @@ import Organization from "./pages/dashboard/shared/Organization";
 import Schedule from "./pages/dashboard/doctor/Schedule";
 import Consultations from "./pages/dashboard/doctor/Consultations";
 import Prescriptions from "./pages/dashboard/doctor/Prescriptions";
+import OnboardingWizard from "./pages/dashboard/doctor/OnboardingWizard";
 
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -194,6 +196,7 @@ const App = () => (
               <Route path="team/user-heads" element={<CH_UserHeads />} />
               <Route path="team/nurses" element={<CH_Nurses />} />
               <Route path="team/technicians" element={<CH_Technicians />} />
+              <Route path="team/doctors" element={<CHDoctors />} />
 
               {/* Others */}
               <Route path="devices" element={<CH_Devices />} />
@@ -251,6 +254,7 @@ const App = () => (
               <Route path="prescriptions" element={<Prescriptions />} />
               <Route path="reports" element={<EA_Reports />} />
               <Route path="payments" element={<Payments />} />
+              <Route path="onboarding" element={<OnboardingWizard />} />
             </Route>
           </Route>
 

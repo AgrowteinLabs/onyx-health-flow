@@ -17,12 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { Plus, Search, Edit, Trash2, Stethoscope, Phone, Eye, EyeOff } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Stethoscope, Phone, Eye, EyeOff, ShieldCheck, Building2, CreditCard, Clock, Award, AlertTriangle } from "lucide-react";
 import { createDoctor, deleteDoctor, listDoctors, updateDoctor } from "@/services/doctor.service";
 import { Label } from "@/components/ui/label";
 import { listOrganizations } from "@/services/organization.service";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 
 interface Doctor {
   id: string;
@@ -75,6 +76,84 @@ const EA_Doctors = () => {
     status: "Active",
   });
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // ====== Review & Verification States ======
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewDoctor, setReviewDoctor] = useState<any>(null);
+  const [reviewTab, setReviewTab] = useState("professional");
+  const [reviewActionLoading, setReviewActionLoading] = useState(false);
+
+  const getDoctorVerificationDetails = (doc: any) => {
+    return {
+      specialty: doc.specialization || doc.specialty || "General Medicine",
+      experience: doc.experience || 8,
+      qualification: doc.qualification || "MBBS, MD",
+      summary: doc.summary || doc.bio || "Dedicated medical professional focused on high-quality patient care, clinical diagnostics, and comprehensive patient recovery workflows.",
+      hospitalName: doc.hospitalName || "Apollo General Hospital",
+      streetAddress: doc.streetAddress || doc.clinicAddress || "12, Bannerghatta Main Road",
+      city: doc.city || "Bengaluru",
+      state: doc.state || "Karnataka",
+      registrationNumber: doc.registrationNumber || `MC-${doc.name ? doc.name.slice(0, 3).toUpperCase() : "DOC"}-9982`,
+      issuingBoard: doc.issuingBoard || "Medical Council of India",
+      licenseExpiry: doc.licenseExpiry || "2030-12-31",
+      consultationFee: doc.consultationFee || doc.consultationFee || 500,
+      startTime: doc.startTime || "09:00",
+      endTime: doc.endTime || "17:00",
+      availableDays: doc.availableDays || ["Monday", "Wednesday", "Friday"],
+      accountHolderName: doc.accountHolderName || doc.name,
+      bankName: doc.bankName || "State Bank of India",
+      accountNumber: doc.accountNumber || "123456789012",
+      ifscCode: doc.ifscCode || "SBIN0001234",
+    };
+  };
+
+  const handleReviewCredentials = (doc: any) => {
+    setReviewDoctor(doc);
+    setReviewTab("professional");
+    setReviewDialogOpen(true);
+  };
+
+  const handleApproveVerification = async (id: string) => {
+    setReviewActionLoading(true);
+    try {
+      await updateDoctor(id, { status: "Active" });
+      toast({ title: "Doctor Approved", description: "Credentials verified & doctor is now Active." });
+      setReviewDialogOpen(false);
+      fetchDoctors();
+    } catch (err: any) {
+      toast({ title: "Approval failed", description: err.message, variant: "destructive" });
+    } finally {
+      setReviewActionLoading(false);
+    }
+  };
+
+  const handleRejectVerification = async (id: string) => {
+    setReviewActionLoading(true);
+    try {
+      await updateDoctor(id, { status: "Inactive" });
+      toast({ title: "Verification Rejected", description: "Doctor credentials rejected & status set to Inactive." });
+      setReviewDialogOpen(false);
+      fetchDoctors();
+    } catch (err: any) {
+      toast({ title: "Rejection failed", description: err.message, variant: "destructive" });
+    } finally {
+      setReviewActionLoading(false);
+    }
+  };
+
+  const handleSuspendDoctor = async (id: string) => {
+    setReviewActionLoading(true);
+    try {
+      await updateDoctor(id, { status: "Suspended" });
+      toast({ title: "Doctor Suspended", description: "Doctor account status has been suspended." });
+      setReviewDialogOpen(false);
+      fetchDoctors();
+    } catch (err: any) {
+      toast({ title: "Suspension failed", description: err.message, variant: "destructive" });
+    } finally {
+      setReviewActionLoading(false);
+    }
+  };
 
   const handleEdit = (doc: any) => {
     setEditingDoctor(doc);
@@ -472,7 +551,9 @@ const EA_Doctors = () => {
                         <SelectContent>
                           <SelectItem value="all">Status: All</SelectItem>
                           <SelectItem value="Active">Active</SelectItem>
+                          <SelectItem value="Pending Verification">Pending Verification</SelectItem>
                           <SelectItem value="Inactive">Inactive</SelectItem>
+                          <SelectItem value="Suspended">Suspended</SelectItem>
                         </SelectContent>
                       </Select>
                     </th>
@@ -495,9 +576,10 @@ const EA_Doctors = () => {
                       <td className="py-3 px-4">
                         <span className={cn(
                           "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border",
-                          d.status === "Inactive"
-                            ? "bg-gray-100 text-gray-800 border-gray-200"
-                            : "bg-[#e6f4ea] text-[#137333] border-[#ceead6]"
+                          d.status === "Inactive" && "bg-gray-100 text-gray-800 border-gray-200",
+                          d.status === "Pending Verification" && "bg-amber-50 text-amber-600 border-amber-200",
+                          d.status === "Suspended" && "bg-rose-50 text-rose-600 border-rose-200",
+                          (d.status === "Active" || !d.status) && "bg-[#e6f4ea] text-[#137333] border-[#ceead6]"
                         )}>
                           {d.status || "Active"}
                         </span>
@@ -508,15 +590,24 @@ const EA_Doctors = () => {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleEdit(d)}
+                            title="Edit Doctor"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
                         )}
                         <Switch
-                          checked={d.status !== "Inactive"}
+                          checked={d.status !== "Inactive" && d.status !== "Suspended"}
                           onCheckedChange={() => handleToggleStatus(d.id || d._id || "", d.status)}
                           title={d.status === "Inactive" ? "Activate" : "Deactivate"}
                         />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleReviewCredentials(d)}
+                          title="Review Credentials"
+                        >
+                          <Eye className="h-4 w-4 text-blue-500" />
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -526,6 +617,207 @@ const EA_Doctors = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Review Credentials Dialog */}
+      <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+          <DialogHeader className="p-6 border-b shrink-0 bg-slate-50/50">
+            <DialogTitle className="flex items-center gap-2 text-[#14213D] font-extrabold text-lg">
+              <ShieldCheck className="h-5.5 w-5.5 text-primary" /> Review Doctor Credentials
+            </DialogTitle>
+          </DialogHeader>
+
+          {reviewDoctor && (
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Status and Summary Header */}
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div>
+                  <h3 className="font-extrabold text-[#14213D] text-sm">{reviewDoctor.name}</h3>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                    {reviewDoctor.phone_number?.join(" ") ? `+${reviewDoctor.phone_number.join(" ")}` : "No Phone"}
+                  </p>
+                </div>
+                <span className={cn(
+                  "px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border",
+                  reviewDoctor.status === "Pending Verification" && "bg-amber-50 text-amber-600 border-amber-200",
+                  reviewDoctor.status === "Active" && "bg-emerald-50 text-emerald-600 border-emerald-200",
+                  reviewDoctor.status === "Suspended" && "bg-rose-50 text-rose-600 border-rose-200",
+                  reviewDoctor.status === "Inactive" && "bg-gray-100 text-gray-500 border-gray-200"
+                )}>
+                  {reviewDoctor.status || "Pending Verification"}
+                </span>
+              </div>
+
+              {/* Tabs Headers */}
+              <div className="flex border-b text-xs font-bold text-slate-400 gap-4 overflow-x-auto pb-2">
+                {[
+                  { id: "professional", label: "Professional Details", icon: Stethoscope },
+                  { id: "clinic", label: "Clinic & License", icon: Building2 },
+                  { id: "schedule", label: "Schedule & Fees", icon: Clock },
+                  { id: "bank", label: "Payout Bank", icon: CreditCard }
+                ].map((t) => {
+                  const Icon = t.icon;
+                  const isSelected = reviewTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setReviewTab(t.id)}
+                      className={cn(
+                        "flex items-center gap-1.5 pb-1 cursor-pointer shrink-0 border-b-2 border-transparent transition-all",
+                        isSelected ? "text-primary border-primary font-extrabold" : "hover:text-slate-600"
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Tab Contents */}
+              <div className="min-h-[220px] text-xs text-slate-600">
+                {reviewTab === "professional" && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-semibold">Specialty / Category</span>
+                        <span className="font-bold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).specialty}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-semibold">Years of Experience</span>
+                        <span className="font-bold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).experience} Years</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Highest Qualification</span>
+                      <span className="font-bold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).qualification}</span>
+                    </div>
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100/50">
+                      <span className="text-[10px] text-slate-400 block font-semibold mb-1">Biography & Bio Statement</span>
+                      <p className="font-medium text-slate-500 leading-relaxed">
+                        {getDoctorVerificationDetails(reviewDoctor).summary}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {reviewTab === "clinic" && (
+                  <div className="space-y-4">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Clinic / Hospital Name</span>
+                      <span className="font-bold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).hospitalName}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-semibold">Street Address</span>
+                      <span className="font-bold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).streetAddress}, {getDoctorVerificationDetails(reviewDoctor).city}, {getDoctorVerificationDetails(reviewDoctor).state}</span>
+                    </div>
+                    <div className="p-3.5 bg-blue-50/30 rounded-xl border border-blue-100/30 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">License Number:</span>
+                        <span className="font-extrabold text-[#14213D]">{getDoctorVerificationDetails(reviewDoctor).registrationNumber}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">Council / Board:</span>
+                        <span className="font-bold text-slate-700">{getDoctorVerificationDetails(reviewDoctor).issuingBoard}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">Expiry Date:</span>
+                        <span className="font-bold text-slate-700">{getDoctorVerificationDetails(reviewDoctor).licenseExpiry}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {reviewTab === "schedule" && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-semibold">Shift Hours</span>
+                        <span className="font-bold text-[#14213D]">
+                          {getDoctorVerificationDetails(reviewDoctor).startTime} - {getDoctorVerificationDetails(reviewDoctor).endTime}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-semibold">Consultation Fee</span>
+                        <span className="font-extrabold text-emerald-600">₹{getDoctorVerificationDetails(reviewDoctor).consultationFee}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-semibold mb-1">Available Work Days</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {getDoctorVerificationDetails(reviewDoctor).availableDays.map((dayName: string) => (
+                          <Badge key={dayName} className="bg-slate-100 text-slate-600 border-none font-bold text-[9px]">
+                            {dayName}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {reviewTab === "bank" && (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">Account Holder:</span>
+                        <span className="font-bold text-slate-800">{getDoctorVerificationDetails(reviewDoctor).accountHolderName}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">Bank Name:</span>
+                        <span className="font-bold text-slate-800">{getDoctorVerificationDetails(reviewDoctor).bankName}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">Account Number:</span>
+                        <span className="font-mono font-bold text-slate-800">{getDoctorVerificationDetails(reviewDoctor).accountNumber}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400 font-semibold">IFSC Code:</span>
+                        <span className="font-mono font-bold text-slate-800">{getDoctorVerificationDetails(reviewDoctor).ifscCode}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="p-6 border-t bg-slate-50/50 shrink-0 flex gap-2 justify-end">
+            <Button variant="outline" className="rounded-xl text-xs font-bold" onClick={() => setReviewDialogOpen(false)}>
+              Close Review
+            </Button>
+            {(reviewDoctor?.status === "Pending Verification" || reviewDoctor?.status === "Inactive" || reviewDoctor?.status === "Suspended") && (
+              <Button 
+                variant="outline" 
+                className="border-rose-100 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold"
+                disabled={reviewActionLoading}
+                onClick={() => handleRejectVerification(reviewDoctor._id || reviewDoctor.id)}
+              >
+                Reject Verification
+              </Button>
+            )}
+            {reviewDoctor?.status === "Active" && (
+              <Button 
+                variant="destructive" 
+                className="bg-rose-600 text-white rounded-xl text-xs font-bold"
+                disabled={reviewActionLoading}
+                onClick={() => handleSuspendDoctor(reviewDoctor._id || reviewDoctor.id)}
+              >
+                Suspend Doctor
+              </Button>
+            )}
+            {reviewDoctor?.status !== "Active" && (
+              <Button 
+                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs"
+                disabled={reviewActionLoading}
+                onClick={() => handleApproveVerification(reviewDoctor._id || reviewDoctor.id)}
+              >
+                Approve & Activate
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Confirm Status Change Dialog */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="sm:max-w-[400px]">

@@ -142,6 +142,10 @@ const NAV: Record<string, any[]> = {
             label: "Technicians",
             path: "/dashboard/cluster-head/team/technicians",
           },
+          {
+            label: "Doctors",
+            path: "/dashboard/cluster-head/team/doctors",
+          },
         ],
       },
       {

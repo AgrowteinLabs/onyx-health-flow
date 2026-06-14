@@ -1,10 +1,10 @@
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import StatCard from "@/components/dashboard/StatCard";
 import WelcomeBanner from "@/components/dashboard/WelcomeBanner";
 import QuickActions from "@/components/dashboard/QuickActions";
 import PageHeader from "@/components/dashboard/PageHeader";
-import { Calendar, Video, FileText, CreditCard, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { Calendar, Video, FileText, CreditCard, Clock, CheckCircle2, AlertCircle, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,7 @@ const statusConfig: Record<string, { bg: string; text: string; border: string }>
 };
 
 const DoctorDashboard = () => {
+  const navigate = useNavigate();
   const location = useLocation();
   const isMainDashboard = location.pathname === "/dashboard/doctor";
   const userName = localStorage.getItem("userName") || "";
@@ -47,6 +48,27 @@ const DoctorDashboard = () => {
           <PageHeader />
 
           <WelcomeBanner name={userName} role="doctor" />
+
+          {/* Onboarding Alert Banner */}
+          {!localStorage.getItem("doctorOnboarded") && (
+            <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-200 rounded-[20px] p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="text-left">
+                  <h4 className="font-extrabold text-[#14213D] text-sm">Onboarding Profile Incomplete</h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Please complete your 5-step professional profile setup to enable booking and receive payouts.
+                  </p>
+                </div>
+              </div>
+              <Button
+                onClick={() => navigate("/dashboard/doctor/onboarding")}
+                className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] font-bold text-xs h-9 px-4 shrink-0 border-none shadow-sm"
+              >
+                Complete Setup <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
 
           {/* Header row with availability toggle */}
           <div className="flex items-center justify-between">
