@@ -54,4 +54,17 @@ export const submitOnboardingStep4 = async (payload: any) => {
   });
 };
 
+export const createPrescription = async (payload: any) => {
+  return apiRequest("/api/prescription", {
+    method: "POST",
+    data: payload,
+  });
+};
+
+export const getPrescription = async (bookingId: string) => {
+  return apiRequest(`/api/prescription/${bookingId}`, {
+    method: "GET",
+  });
+};
+
     

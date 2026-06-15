@@ -73,3 +73,9 @@ export const getAnalyticsDashboard = async (
   });
   return response.data;
 };
+
+export const getSettlements = async (): Promise<any> => {
+  return apiRequest("/api/admin/settlements", {
+    method: "GET",
+  });
+};

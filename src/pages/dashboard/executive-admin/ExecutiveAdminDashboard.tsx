@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { listOrganizations } from "@/services/organization.service";
 import { listDoctors } from "@/services/doctor.service";
 import { listTechnicians } from "@/services/technician.service";
-import { getAnalyticsDashboard, type AnalyticsData } from "@/services/analytics.service";
+import { getAnalyticsDashboard, type AnalyticsData, getSettlements } from "@/services/analytics.service";
 
 const MetricBar = ({
   label,
@@ -89,6 +89,8 @@ const ExecutiveAdminDashboard = () => {
   });
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
+  const [settlementsData, setSettlementsData] = useState<any>(null);
+  const [settlementsLoading, setSettlementsLoading] = useState(true);
 
   const [orgOverview, setOrgOverview] = useState<
     { name: string; doctors: number; devices: number; status: string; code?: string; location?: string }[]
@@ -180,9 +182,22 @@ const ExecutiveAdminDashboard = () => {
     }
   };
 
+  const fetchSettlements = async () => {
+    setSettlementsLoading(true);
+    try {
+      const data = await getSettlements();
+      if (data) setSettlementsData(data);
+    } catch (err) {
+      console.error("Failed to load settlements data", err);
+    } finally {
+      setSettlementsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchDashboardData();
     fetchAnalytics();
+    fetchSettlements();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const userName = localStorage.getItem("userName") || "";
@@ -524,35 +539,49 @@ const ExecutiveAdminDashboard = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
                     <span className="text-[10px] text-slate-400 block font-bold">Total Payouts</span>
-                    <span className="text-base font-extrabold text-[#14213D]">₹1,85,400</span>
+                    <span className="text-base font-extrabold text-[#14213D]">
+                      ₹{settlementsData?.totalPayouts ?? settlementsData?.totalVolume ?? "1,85,400"}
+                    </span>
                   </div>
                   <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
                     <span className="text-[10px] text-slate-400 block font-bold">Pending Review</span>
-                    <span className="text-base font-extrabold text-amber-600">₹14,200</span>
+                    <span className="text-base font-extrabold text-amber-600">
+                      ₹{settlementsData?.pendingReview ?? "14,200"}
+                    </span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Recent Linked Payouts</span>
-                  {[
-                    { doctor: "Dr. Sarah Jenkins", amount: "₹45,200", status: "Settled" },
-                    { doctor: "Dr. Robert Chen", amount: "₹32,000", status: "Settled" },
-                    { doctor: "Dr. Rohan Mehta", amount: "₹12,500", status: "Pending Approval" }
-                  ].map((pay, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-white/40 border border-white/50">
-                      <div>
-                        <p className="font-bold text-[#14213D]">{pay.doctor}</p>
-                        <p className="text-[9px] text-slate-400">Linked Node Payout</p>
+                  {settlementsLoading ? (
+                    <p className="text-xs text-slate-400 animate-pulse">Loading settlements...</p>
+                  ) : (settlementsData?.settlements ?? settlementsData?.ledger ?? [
+                    { doctor: "Dr. Sarah Jenkins", amount: "45200", status: "Settled" },
+                    { doctor: "Dr. Robert Chen", amount: "32000", status: "Settled" },
+                    { doctor: "Dr. Rohan Mehta", amount: "12500", status: "Pending Approval" }
+                  ]).slice(0, 3).map((pay: any, idx: number) => {
+                    const docName = pay.doctor || pay.doctorName || "Doctor Payout";
+                    const isSettled = pay.status === "Settled" || pay.status === "success" || pay.status === "Confirmed" || !pay.status;
+                    return (
+                      <div key={idx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-white/40 border border-white/50">
+                        <div>
+                          <p className="font-bold text-[#14213D]">{docName}</p>
+                          <p className="text-[9px] text-slate-400 truncate max-w-[150px]">
+                            {pay.splitTransferId ? `Ref: ${pay.splitTransferId}` : "Linked Node Payout"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-extrabold text-[#14213D]">₹{Number(pay.amount || pay.payoutAmount || 0).toLocaleString("en-IN")}</p>
+                          <span className={cn(
+                            "text-[8px] font-extrabold",
+                            isSettled ? "text-emerald-500" : "text-amber-500"
+                          )}>
+                            {isSettled ? "Settled" : (pay.status || "Pending Approval")}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-extrabold text-[#14213D]">{pay.amount}</p>
-                        <span className={cn(
-                          "text-[8px] font-extrabold",
-                          pay.status === "Settled" ? "text-emerald-500" : "text-amber-500"
-                        )}>{pay.status}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

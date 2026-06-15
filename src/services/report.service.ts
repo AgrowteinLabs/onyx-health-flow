@@ -40,3 +40,8 @@ export const listReportsForClusterHead = async (id: string) => {
   const res = await apiRequest(API_ENDPOINTS.REPORT.CLUSTER_HEAD(id), { method: "GET" });
   return res.reports || [];
 };
+
+export const listConsultationsReport = async (): Promise<any[]> => {
+  const res = await apiRequest("/api/reports/consultations", { method: "GET" });
+  return res.bookings || res.data || (Array.isArray(res) ? res : []);
+};
