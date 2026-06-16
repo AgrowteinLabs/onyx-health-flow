@@ -190,7 +190,7 @@ const EA_Devices = () => {
                   <tr>
                     <th className="text-left py-3 px-4 font-semibold">Name</th>
                     <th className="text-left py-3 px-4 font-semibold">Device Code</th>
-                    <th className="text-left py-3 px-4 font-semibold">Model No</th>
+
                     <th className="text-left py-3 px-4 font-semibold">Organization</th>
                     <th className="text-left py-3 px-4 font-semibold">Nurse on Duty</th>
                     <th className="text-left py-3 px-4 font-semibold">
@@ -219,7 +219,7 @@ const EA_Devices = () => {
                     >
                       <td className="py-3 px-4 font-medium">{d.name}</td>
                       <td className="py-3 px-4 text-muted-foreground">{d.deviceCode}</td>
-                      <td className="py-3 px-4 text-muted-foreground">{d.modelNo || "—"}</td>
+
                       <td className="py-3 px-4">{d.organization || d.organizationName || "—"}</td>
                       <td className="py-3 px-4">
                         {d.nurseOnDuty ? (

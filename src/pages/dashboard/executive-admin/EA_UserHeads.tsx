@@ -792,9 +792,7 @@ const EA_UserHeads = () => {
                     <th className="text-left py-3 px-4 font-semibold">
                       Organization
                     </th>
-                    <th className="text-left py-3 px-4 font-semibold">
-                      Country
-                    </th>
+
                     <th className="text-left py-3 px-4 font-semibold">
                       <Select
                         value={statusFilter}
@@ -829,7 +827,7 @@ const EA_UserHeads = () => {
                       <td className="py-3 px-4">
                         {u.organizationName || "—"}
                       </td>
-                      <td className="py-3 px-4">{u.country}</td>
+
                       <td className="py-3 px-4">
                         <span className={cn(
                           "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border",
