@@ -453,7 +453,7 @@ const CH_UserHeads = () => {
                 <tr className="border-b">
                   <th className="text-left py-3 px-4 font-semibold">Name</th>
                   <th className="text-left py-3 px-4 font-semibold">Phone</th>
-                  <th className="text-left py-3 px-4 font-semibold">Country</th>
+
                   <th className="text-left py-3 px-4 font-semibold">
                     <Select
                       value={statusFilter}
@@ -484,7 +484,7 @@ const CH_UserHeads = () => {
                         ? `+${u.phone_number.join(" ")}`
                         : "—"}
                     </td>
-                    <td className="py-3 px-4">{u.country || "—"}</td>
+
                     <td className="py-3 px-4">
                       <span
                         className={`px-3 py-1 rounded-full text-xs font-medium ${

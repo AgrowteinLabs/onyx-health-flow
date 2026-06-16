@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import EmptyState from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,9 @@ import {
   CheckCircle2,
   Clock,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { listBookings } from "@/services/booking.service";
+import { createPrescription } from "@/services/doctor.service";
 
 interface Prescription {
   id: number;
@@ -102,6 +105,7 @@ const REFILL_CONFIG = {
 };
 
 const Prescriptions = () => {
+  const { toast } = useToast();
   const [prescriptions, setPrescriptions] = useState(PRESCRIPTIONS);
   const [issueOpen, setIssueOpen] = useState(false);
   const [previewId, setPreviewId] = useState<number | null>(null);
@@ -114,8 +118,44 @@ const Prescriptions = () => {
     notes: "",
   });
 
-  const handleIssue = () => {
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [selectedBooking, setSelectedBooking] = useState<any>(null);
+
+  const fetchBookings = async () => {
+    try {
+      const list = await listBookings();
+      setBookings(list || []);
+    } catch (err) {
+      console.error("Failed to load bookings", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchBookings();
+  }, []);
+
+  const handleIssue = async () => {
     if (!newRx.patient || !newRx.medication) return;
+
+    try {
+      const bookingId = selectedBooking?._id || selectedBooking?.id;
+      const profileId = selectedBooking?.profileId || selectedBooking?.profile?._id || selectedBooking?.userId?._id;
+      
+      if (bookingId) {
+        await createPrescription({
+          bookingId,
+          profileId,
+          medications: [{ name: newRx.medication, dosage: newRx.dosage, frequency: newRx.frequency }],
+          instructions: newRx.notes,
+          notes: newRx.notes
+        });
+        toast({ title: "Prescription issued successfully!" });
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast({ title: "Saved locally (offline mode)", description: err.message });
+    }
+
     const id = Date.now();
     setPrescriptions((prev) => [
       {
@@ -131,6 +171,7 @@ const Prescriptions = () => {
       ...prev,
     ]);
     setIssueOpen(false);
+    setSelectedBooking(null);
     setNewRx({ patient: "", medication: "", dosage: "", frequency: "Once daily", duration: "30 days", notes: "" });
   };
 
@@ -275,13 +316,45 @@ const Prescriptions = () => {
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <div>
-              <Label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Patient Name</Label>
-              <Input
-                value={newRx.patient}
-                onChange={(e) => setNewRx({ ...newRx, patient: e.target.value })}
-                placeholder="Patient full name"
-                className="rounded-[14px] border-slate-200 h-10"
-              />
+              <Label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider mb-1.5 block">Patient Appointment *</Label>
+              {bookings.length > 0 ? (
+                <select
+                  onChange={(e) => {
+                    const bId = e.target.value;
+                    const b = bookings.find((bk) => (bk._id || bk.id) === bId);
+                    if (b) {
+                      setSelectedBooking(b);
+                      setNewRx({
+                        ...newRx,
+                        patient: b.patient?.name || b.profile?.name || b.userId?.name || "Patient"
+                      });
+                    } else {
+                      setSelectedBooking(null);
+                      setNewRx({ ...newRx, patient: "" });
+                    }
+                  }}
+                  value={selectedBooking ? (selectedBooking._id || selectedBooking.id) : ""}
+                  className="w-full rounded-xl border border-slate-200 bg-white h-10 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring font-semibold text-slate-800"
+                >
+                  <option value="">-- Select Patient Booking --</option>
+                  {bookings.map((b) => {
+                    const pName = b.patient?.name || b.profile?.name || b.userId?.name || "Patient";
+                    const dateStr = b.slotDate ? new Date(b.slotDate).toLocaleDateString() : "—";
+                    return (
+                      <option key={b._id || b.id} value={b._id || b.id}>
+                        {pName} ({b.status || "Confirmed"} - {dateStr})
+                      </option>
+                    );
+                  })}
+                </select>
+              ) : (
+                <Input
+                  value={newRx.patient}
+                  onChange={(e) => setNewRx({ ...newRx, patient: e.target.value })}
+                  placeholder="Patient full name"
+                  className="rounded-[14px] border-slate-200 h-10"
+                />
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

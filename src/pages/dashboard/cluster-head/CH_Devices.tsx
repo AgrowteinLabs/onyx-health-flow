@@ -141,10 +141,6 @@ const CH_Devices = () => {
 
               {/* Details */}
               <div className="space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold">
-                  <Cpu className="h-3.5 w-3.5 text-slate-400" />
-                  Model: <span className="font-bold text-[#14213D]">{device.modelNo}</span>
-                </div>
                 {device.location && device.location !== "—" && (
                   <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold">
                     <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
