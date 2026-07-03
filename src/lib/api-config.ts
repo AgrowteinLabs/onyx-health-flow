@@ -161,4 +161,9 @@ export const API_ENDPOINTS = {
     ADMIN_LIST: '/api/ticket/admin/list',
     ADMIN_RESOLVE: (id: string) => `/api/ticket/admin/resolve/${id}`,
   },
+
+  // Video endpoints
+  VIDEO: {
+    TOKEN: (bookingId: string) => `/api/video/token/${bookingId}`,
+  }
 };

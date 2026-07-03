@@ -67,4 +67,18 @@ export const getPrescription = async (bookingId: string) => {
   });
 };
 
-    
+export const getOnboardingStatus = async () => {
+  return apiRequest("/api/doctor/onboarding/status", { method: "GET" });
+};
+
+export const listDoctorsAdmin = async () => {
+  const res = await apiRequest("/api/doctor/admin/list", { method: "GET" });
+  return res.doctors || res.data || (Array.isArray(res) ? res : []);
+};
+
+export const approveDoctorAdmin = async (doctorId: string, status: string, rejectionReason?: string) => {
+  return apiRequest("/api/doctor/admin/approve", {
+    method: "POST",
+    data: { doctorId, status, rejectionReason },
+  });
+};
