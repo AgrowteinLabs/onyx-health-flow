@@ -25,6 +25,8 @@ import {
   CalendarDays,
   ActivitySquare,
   Sparkles,
+  Stethoscope,
+  AlertCircle
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -41,6 +43,7 @@ import {
   Legend,
 } from "recharts";
 import { getAnalyticsDashboard, AnalyticsData } from "@/services/analytics.service";
+import { listDoctorsAdmin } from "@/services/doctor.service";
 
 const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042", "#0088fe"];
 
@@ -124,6 +127,46 @@ const EA_Analytics = () => {
     endDate: new Date().toISOString().split("T")[0],
   });
 
+  const [doctorStats, setDoctorStats] = useState({
+    total: 0,
+    pendingReview: 0,
+    approved: 0,
+    onboardingPending: 0,
+  });
+
+  const fetchDoctorStats = async () => {
+    try {
+      const doctors = await listDoctorsAdmin();
+      const total = doctors.length;
+      let pendingReview = 0;
+      let approved = 0;
+      let onboardingPending = 0;
+
+      doctors.forEach((doc: any) => {
+        if (doc.accountStatus === "approved" || doc.status === "Active") {
+          approved++;
+        } else if (doc.accountStatus === "rejected" || doc.status === "Inactive") {
+          // rejected/inactive (not counted as pending or approved)
+        } else if (doc.onboardingStatus === "onboarding_pending") {
+          onboardingPending++;
+        } else if (doc.onboardingStatus === "onboarding_complete" && (doc.accountStatus === "not_approved" || !doc.accountStatus)) {
+          pendingReview++;
+        } else {
+          pendingReview++;
+        }
+      });
+
+      setDoctorStats({
+        total,
+        pendingReview,
+        approved,
+        onboardingPending,
+      });
+    } catch (err) {
+      console.error("Failed to load doctor stats for admin metrics", err);
+    }
+  };
+
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
@@ -151,6 +194,7 @@ const EA_Analytics = () => {
 
   useEffect(() => {
     fetchAnalytics();
+    fetchDoctorStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
@@ -357,6 +401,62 @@ const EA_Analytics = () => {
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Doctor Onboarding & Credentials Setup Overview */}
+      <div className="space-y-4">
+        <h2 className="text-xl font-extrabold text-[#14213D] flex items-center gap-2 text-left">
+          <Stethoscope className="h-5 w-5 text-[#35B7C9]" /> Doctor Setup & Onboarding Analytics
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Total Registered Doctors */}
+          <Card className="glass-panel border-none shadow-xl rounded-[24px] overflow-hidden hover:scale-[1.02] transition-transform">
+            <CardContent className="p-6 relative text-left bg-white">
+              <div className="absolute right-4 top-4 p-3 rounded-full bg-[#14213D]/10 text-[#14213D]">
+                <Users className="h-6 w-6" />
+              </div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Doctors</p>
+              <h3 className="text-4xl font-extrabold text-[#2d3748] mt-2">{doctorStats.total}</h3>
+              <p className="text-[11px] font-semibold text-slate-400 mt-4">Total registered on platform</p>
+            </CardContent>
+          </Card>
+
+          {/* Pending Credentials Verification */}
+          <Card className="glass-panel border-none shadow-xl rounded-[24px] overflow-hidden hover:scale-[1.02] transition-transform">
+            <CardContent className="p-6 relative text-left bg-white">
+              <div className="absolute right-4 top-4 p-3 rounded-full bg-amber-500/10 text-amber-600">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Pending Review</p>
+              <h3 className="text-4xl font-extrabold text-amber-600 mt-2">{doctorStats.pendingReview}</h3>
+              <p className="text-[11px] font-semibold text-amber-500 mt-4">Completed steps 1–4, awaiting approval</p>
+            </CardContent>
+          </Card>
+
+          {/* Active / Approved Doctors */}
+          <Card className="glass-panel border-none shadow-xl rounded-[24px] overflow-hidden hover:scale-[1.02] transition-transform">
+            <CardContent className="p-6 relative text-left bg-white">
+              <div className="absolute right-4 top-4 p-3 rounded-full bg-emerald-500/10 text-emerald-600">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Approved & Active</p>
+              <h3 className="text-4xl font-extrabold text-emerald-600 mt-2">{doctorStats.approved}</h3>
+              <p className="text-[11px] font-semibold text-emerald-500 mt-4">Verification approved and active</p>
+            </CardContent>
+          </Card>
+
+          {/* Incomplete Onboarding */}
+          <Card className="glass-panel border-none shadow-xl rounded-[24px] overflow-hidden hover:scale-[1.02] transition-transform">
+            <CardContent className="p-6 relative text-left bg-white">
+              <div className="absolute right-4 top-4 p-3 rounded-full bg-rose-500/10 text-rose-600">
+                <FileSignature className="h-6 w-6" />
+              </div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Onboarding Incomplete</p>
+              <h3 className="text-4xl font-extrabold text-rose-600 mt-2">{doctorStats.onboardingPending}</h3>
+              <p className="text-[11px] font-semibold text-rose-500 mt-4">Draft steps 1–4 incomplete</p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Main Analytical Plots Section */}

@@ -270,6 +270,11 @@ const NAV: Record<string, any[]> = {
         icon: CreditCard,
         path: "/dashboard/doctor/payments",
       },
+      {
+        label: "Onboarding Profile",
+        icon: ShieldCheck,
+        path: "/dashboard/doctor/onboarding",
+      },
     ],
 };
 

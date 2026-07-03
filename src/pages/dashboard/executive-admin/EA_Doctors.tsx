@@ -18,7 +18,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { Plus, Search, Edit, Trash2, Stethoscope, Phone, Eye, EyeOff, ShieldCheck, Building2, CreditCard, Clock, Award, AlertTriangle } from "lucide-react";
-import { createDoctor, deleteDoctor, listDoctors, updateDoctor } from "@/services/doctor.service";
+import { createDoctor, deleteDoctor, listDoctors, updateDoctor, listDoctorsAdmin, approveDoctorAdmin } from "@/services/doctor.service";
 import { Label } from "@/components/ui/label";
 import { listOrganizations } from "@/services/organization.service";
 import { cn } from "@/lib/utils";
@@ -113,11 +113,11 @@ const EA_Doctors = () => {
     setReviewDialogOpen(true);
   };
 
-  const handleApproveVerification = async (id: string) => {
+  const handleApproveVerification = async (doctorId: string) => {
     setReviewActionLoading(true);
     try {
-      await updateDoctor(id, { status: "Active" });
-      toast({ title: "Doctor Approved", description: "Credentials verified & doctor is now Active." });
+      await approveDoctorAdmin(doctorId, "approved");
+      toast({ title: "Doctor Approved", description: "Credentials verified & doctor status set to approved." });
       setReviewDialogOpen(false);
       fetchDoctors();
     } catch (err: any) {
@@ -127,11 +127,11 @@ const EA_Doctors = () => {
     }
   };
 
-  const handleRejectVerification = async (id: string) => {
+  const handleRejectVerification = async (doctorId: string) => {
     setReviewActionLoading(true);
     try {
-      await updateDoctor(id, { status: "Inactive" });
-      toast({ title: "Verification Rejected", description: "Doctor credentials rejected & status set to Inactive." });
+      await approveDoctorAdmin(doctorId, "rejected", "Credentials verification failed");
+      toast({ title: "Verification Rejected", description: "Doctor credentials rejected & status set to rejected." });
       setReviewDialogOpen(false);
       fetchDoctors();
     } catch (err: any) {
@@ -141,10 +141,10 @@ const EA_Doctors = () => {
     }
   };
 
-  const handleSuspendDoctor = async (id: string) => {
+  const handleSuspendDoctor = async (userId: string) => {
     setReviewActionLoading(true);
     try {
-      await updateDoctor(id, { status: "Suspended" });
+      await updateDoctor(userId, { status: "Inactive" });
       toast({ title: "Doctor Suspended", description: "Doctor account status has been suspended." });
       setReviewDialogOpen(false);
       fetchDoctors();
@@ -208,9 +208,26 @@ const EA_Doctors = () => {
   const fetchDoctors = async () => {
     setLoading(true);
     try {
-      const data = await listDoctors();
-      setDoctors(data);
-      setFiltered(data);
+      const data = await listDoctorsAdmin();
+      // Map API onboarding and account status fields to match existing UI status fields
+      const mappedData = data.map((doc: any) => {
+        let computedStatus = "Pending Verification";
+        if (doc.accountStatus === "approved") {
+          computedStatus = "Active";
+        } else if (doc.accountStatus === "rejected") {
+          computedStatus = "Inactive";
+        } else if (doc.userStatus === "Inactive") {
+          computedStatus = "Suspended";
+        } else if (doc.onboardingStatus === "onboarding_pending") {
+          computedStatus = "Pending Verification";
+        }
+        return {
+          ...doc,
+          status: doc.status || computedStatus,
+        };
+      });
+      setDoctors(mappedData);
+      setFiltered(mappedData);
     } catch (err) {
       console.error(err);
       toast({ title: "Failed to load doctors", variant: "destructive" });
@@ -236,6 +253,7 @@ const EA_Doctors = () => {
   useEffect(() => {
     fetchDoctors();
     fetchOrganizations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ================================
@@ -791,7 +809,7 @@ const EA_Doctors = () => {
                 variant="outline" 
                 className="border-rose-100 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold"
                 disabled={reviewActionLoading}
-                onClick={() => handleRejectVerification(reviewDoctor._id || reviewDoctor.id)}
+                onClick={() => handleRejectVerification(reviewDoctor.doctorId || reviewDoctor._id || reviewDoctor.id)}
               >
                 Reject Verification
               </Button>
@@ -801,7 +819,7 @@ const EA_Doctors = () => {
                 variant="destructive" 
                 className="bg-rose-600 text-white rounded-xl text-xs font-bold"
                 disabled={reviewActionLoading}
-                onClick={() => handleSuspendDoctor(reviewDoctor._id || reviewDoctor.id)}
+                onClick={() => handleSuspendDoctor(reviewDoctor.userId || reviewDoctor._id || reviewDoctor.id)}
               >
                 Suspend Doctor
               </Button>
@@ -810,7 +828,7 @@ const EA_Doctors = () => {
               <Button 
                 className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs"
                 disabled={reviewActionLoading}
-                onClick={() => handleApproveVerification(reviewDoctor._id || reviewDoctor.id)}
+                onClick={() => handleApproveVerification(reviewDoctor.doctorId || reviewDoctor._id || reviewDoctor.id)}
               >
                 Approve & Activate
               </Button>
