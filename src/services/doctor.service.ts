@@ -82,3 +82,51 @@ export const approveDoctorAdmin = async (doctorId: string, status: string, rejec
     data: { doctorId, status, rejectionReason },
   });
 };
+
+export const updateDoctorAvailability = async (payload: boolean | any) => {
+  const data = typeof payload === "boolean" ? { isAvailable: payload } : payload;
+  return apiRequest("/api/doctor/availability", {
+    method: "POST",
+    data,
+  });
+};
+
+export const getDoctorAvailability = async () => {
+  return apiRequest("/api/doctor/availability", {
+    method: "GET",
+  });
+};
+
+export const getDoctorDocumentPresignedUrl = async (payload: {
+  documentType: string;
+  fileName: string;
+  mimeType: string;
+}) => {
+  return apiRequest("/api/doctor/documents/presigned-url", {
+    method: "POST",
+    data: payload,
+  });
+};
+
+export const uploadDoctorDocumentToS3 = async (presignedUrl: string, file: File) => {
+  return fetch(presignedUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": file.type,
+    },
+    body: file,
+  });
+};
+
+export const completeBooking = async (bookingId: string) => {
+  return apiRequest(`/api/booking/complete/${bookingId}`, {
+    method: "POST",
+    data: { bookingId },
+  });
+};
+
+export const getAgoraVideoToken = async (bookingId: string) => {
+  return apiRequest(`/api/video/token/${bookingId}`, {
+    method: "GET",
+  });
+};

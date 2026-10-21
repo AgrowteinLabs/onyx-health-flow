@@ -81,6 +81,10 @@ import Schedule from "./pages/dashboard/doctor/Schedule";
 import Consultations from "./pages/dashboard/doctor/Consultations";
 import Prescriptions from "./pages/dashboard/doctor/Prescriptions";
 import OnboardingWizard from "./pages/dashboard/doctor/OnboardingWizard";
+import DoctorProfile from "./pages/dashboard/doctor/DoctorProfile";
+import DoctorTickets from "./pages/dashboard/doctor/DoctorTickets";
+import DoctorNotifications from "./pages/dashboard/doctor/DoctorNotifications";
+import DoctorSettings from "./pages/dashboard/doctor/DoctorSettings";
 
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -98,12 +102,27 @@ const RouteLogger = () => {
 };
 
 /* ===============================
-   Auto Redirect After Login
+   Session Synchronization & Auto Redirect
 =============================== */
-const AutoRedirect = () => {
+const SessionSync = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Multi-tab logout synchronization
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if ((e.key === "authToken" && !e.newValue) || e.key === null) {
+        console.warn("🔒 Logout detected in another tab. Resetting session.");
+        queryClient.clear();
+        navigate("/login", { replace: true });
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, [navigate]);
+
+  // Auto redirect after login
   useEffect(() => {
     const token = localStorage.getItem("authToken");
     let role = localStorage.getItem("userRole");
@@ -132,7 +151,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <RouteLogger />
-        <AutoRedirect />
+        <SessionSync />
 
         <Routes>
           {/* 🔓 Public Routes */}
@@ -248,12 +267,16 @@ const App = () => (
           ======================== */}
           <Route element={<ProtectedRoute allowedRoles={["doctor"]} />}>
             <Route path="/dashboard/doctor" element={<DoctorDashboard />}>
-              <Route index element={<Schedule />} />
+              <Route index element={<DoctorDashboard />} />
+              <Route path="profile" element={<DoctorProfile />} />
               <Route path="schedule" element={<Schedule />} />
               <Route path="consultations" element={<Consultations />} />
               <Route path="prescriptions" element={<Prescriptions />} />
               <Route path="reports" element={<EA_Reports />} />
               <Route path="payments" element={<Payments />} />
+              <Route path="tickets" element={<DoctorTickets />} />
+              <Route path="notifications" element={<DoctorNotifications />} />
+              <Route path="settings" element={<DoctorSettings />} />
               <Route path="onboarding" element={<OnboardingWizard />} />
             </Route>
           </Route>

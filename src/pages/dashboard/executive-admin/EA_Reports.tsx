@@ -8,8 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useToast } from "@/components/ui/use-toast";
-import { Search, FileText, Download, Info, User, Cpu, Calendar, Video, Clock } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Search, FileText, Download, Info, User, Cpu, Calendar, Video, Clock, AlertCircle, ShieldCheck, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/api-request";
 import { viewUser } from "@/services/user.service";
 import { listConsultationsReport } from "@/services/report.service";
@@ -49,6 +49,7 @@ const EA_Reports = () => {
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const userRole = localStorage.getItem("userRole") || "";
 
   const [activeTab, setActiveTab] = useState<"reports" | "consultations">("reports");
@@ -154,10 +155,50 @@ const EA_Reports = () => {
   };
 
   // ================================
-  // Download Report
+  // Download Report (Presigned S3 URL Fetching)
   // ================================
-  const downloadReport = (url: string) => {
-    window.open(url, "_blank");
+  const downloadReport = async (report: Report) => {
+    if (!report) return;
+    setDownloadingId(report._id);
+    try {
+      let downloadUrl = report.s3Link;
+      
+      // Attempt to retrieve fresh presigned URL from backend
+      try {
+        const res = await apiRequest(`/api/report/${report._id}/download`, { method: "GET" });
+        if (res?.downloadUrl) {
+          downloadUrl = res.downloadUrl;
+        }
+      } catch {
+        console.warn("Using fallback s3Link directly from report object");
+      }
+
+      if (!downloadUrl || downloadUrl === "#") {
+        toast({
+          title: "Report Unavailable",
+          description: "Diagnostic PDF report artifact is not yet uploaded or available for this session.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const win = window.open(downloadUrl, "_blank", "noopener,noreferrer");
+      if (!win) {
+        toast({
+          title: "Popup Blocked",
+          description: "Please allow popups in your browser to view the diagnostic PDF report.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to retrieve report document:", err);
+      toast({
+        title: "Download Failed",
+        description: "Could not retrieve report document. Please try again or verify network connectivity.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   // ================================
@@ -174,6 +215,15 @@ const EA_Reports = () => {
           <p className="text-muted-foreground mt-1">
             View generated health reports and platform consultations payout ledgers.
           </p>
+        </div>
+      </div>
+
+      {/* Clinical Screening Disclaimer Banner */}
+      <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 shadow-sm">
+        <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-950 leading-relaxed">
+          <span className="font-bold uppercase tracking-wider text-amber-900">Clinical Screening Notice: </span>
+          ONYX Health+ provides automated physiological telemetry and health screening. Readings are intended solely for triage and screening support and do <strong>NOT</strong> constitute a definitive medical diagnosis. All records must be reviewed and confirmed by a licensed clinician.
         </div>
       </div>
 
@@ -310,10 +360,15 @@ const EA_Reports = () => {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => downloadReport(r?.s3Link || "#")}
-                            disabled={!r?.s3Link}
+                            onClick={() => downloadReport(r)}
+                            disabled={downloadingId === r._id}
+                            title="Download Report PDF"
                           >
-                            <Download className="h-4 w-4" />
+                            {downloadingId === r._id ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
                           </Button>
                         </td>
                       </tr>
@@ -409,13 +464,29 @@ const EA_Reports = () => {
                   {selectedReport.createdAt ? new Date(selectedReport.createdAt).toLocaleString() : "—"}
                 </span>
               </div>
+              {/* PHI Confidentiality Notice */}
+              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-[11px] text-slate-600 leading-relaxed flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-slate-700">Confidential Medical Record:</span> This document contains Protected Health Information (PHI). Authorized clinical personnel only.
+                </div>
+              </div>
+
               <div className="mt-4">
                 <Button
-                  className="w-full"
-                  onClick={() => downloadReport(selectedReport.s3Link || "#")}
-                  disabled={!selectedReport.s3Link}
+                  className="w-full font-bold"
+                  onClick={() => downloadReport(selectedReport)}
+                  disabled={downloadingId === selectedReport._id}
                 >
-                  <Download className="h-4 w-4 mr-2" /> View Report PDF
+                  {downloadingId === selectedReport._id ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Retrieving Presigned PDF...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" /> View / Download Report PDF
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
