@@ -727,6 +727,52 @@ const DoctorDashboard = () => {
             </div>
           </div>
 
+          {/* High-Priority Live Consultation Alert Banner (Real-time, No Refresh Needed) */}
+          {liveWaitingConsultation && (
+            <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-r from-rose-600 via-red-500 to-amber-500 p-1 shadow-2xl shadow-rose-500/30 animate-pulse">
+              <div className="rounded-[22px] bg-[#14213D] p-5 sm:p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-[#F2052C] to-[#FF4B66] flex items-center justify-center text-white font-extrabold text-xl shadow-lg shrink-0">
+                    <Video className="h-7 w-7 animate-bounce" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="bg-rose-500 text-white font-black text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-full flex items-center gap-1.5 animate-pulse">
+                        <span className="h-2 w-2 rounded-full bg-white" /> LIVE PATIENT WAITING NOW
+                      </span>
+                      <span className="text-xs text-amber-300 font-bold">Immediate Telehealth Consultation</span>
+                    </div>
+                    <h3 className="text-lg font-black text-white mt-1">
+                      {liveWaitingConsultation.patient}
+                    </h3>
+                    <p className="text-xs text-slate-300 font-medium">
+                      {liveWaitingConsultation.type} • {liveWaitingConsultation.reason || "Telehealth Consultation"} • Scheduled: <span className="text-white font-bold">{liveWaitingConsultation.time}</span>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={() =>
+                      navigate(
+                        `/dashboard/doctor/consultations?bookingId=${liveWaitingConsultation.bookingId}&autoJoin=true`,
+                        {
+                          state: {
+                            bookingId: liveWaitingConsultation.bookingId,
+                            patient: liveWaitingConsultation.patient,
+                            autoJoin: true,
+                          },
+                        }
+                      )
+                    }
+                    className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black rounded-xl h-12 px-6 text-sm shadow-xl flex items-center gap-2 border-none transform hover:scale-105 transition-all"
+                  >
+                    <Video className="h-5 w-5" /> JOIN VIDEO ROOM NOW
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Onboarding Alert Banner (if setup incomplete or pending) */}
           {onboardingStatus !== "approved" && (
             <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-300/80 rounded-[22px] p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1138,100 +1184,98 @@ const DoctorDashboard = () => {
               </div>
             </div>
 
-            {/* Patient Kiosk Diagnostic Reports */}
+            {/* Active Telehealth Consultations & Queue */}
             <div className="bg-white/70 backdrop-blur-md rounded-[24px] border border-white/60 shadow-sm p-6 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-[10px] bg-blue-50 text-blue-600 flex items-center justify-center">
-                      <Activity className="h-4 w-4" />
+                    <div className="h-8 w-8 rounded-[10px] bg-rose-50 text-[#F2052C] flex items-center justify-center">
+                      <Video className="h-4 w-4" />
                     </div>
-                    <h3 className="text-base font-extrabold text-[#14213D]">
-                      Kiosk Screening Reports
-                    </h3>
+                    <div>
+                      <h3 className="text-base font-extrabold text-[#14213D]">
+                        Active Consultation Queue
+                      </h3>
+                      <p className="text-[10px] text-slate-400 font-semibold">Live incoming & upcoming patient visits</p>
+                    </div>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => navigate("/dashboard/doctor/reports")}
+                    onClick={() => navigate("/dashboard/doctor/consultations")}
                     className="text-xs font-extrabold text-[#F2052C] hover:text-[#FF4B66] hover:bg-rose-50 rounded-[12px] h-8"
                   >
-                    View All <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
+                    All Consults <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
                   </Button>
                 </div>
 
                 <div className="space-y-3">
-                  {reports.length === 0 ? (
+                  {appointments.filter((a) => a.status === "Upcoming" || a.status === "In Progress").length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center bg-slate-50/50 rounded-[18px] border border-dashed border-slate-200">
                       <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
-                        <Activity className="h-5 w-5" />
+                        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                       </div>
-                      <p className="text-xs font-bold text-slate-600">No telemetry reports received</p>
+                      <p className="text-xs font-bold text-slate-700">Queue is Clear</p>
                       <p className="text-[11px] text-slate-400 mt-0.5 max-w-[220px]">
-                        Diagnostic data from ONYX health screening kiosks will sync automatically.
+                        Standing by. When patients initiate instant or scheduled calls, they will appear here automatically.
                       </p>
                     </div>
                   ) : (
-                    reports.map((rpt) => (
-                      <div
-                        key={rpt.id}
-                        onClick={() => navigate("/dashboard/doctor/reports")}
-                        className="flex items-center justify-between p-3.5 rounded-[16px] bg-slate-50/70 hover:bg-white transition-all cursor-pointer border border-transparent hover:border-slate-100"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div
-                            className={`h-10 w-10 rounded-[12px] flex items-center justify-center shrink-0 ${
-                              rpt.status === "Reviewed"
-                                ? "bg-emerald-50 text-emerald-600"
-                                : "bg-amber-50 text-amber-600"
-                            }`}
-                          >
-                            {rpt.status === "Reviewed" ? (
-                              <CheckCircle2 className="h-5 w-5" />
-                            ) : (
-                              <AlertCircle className="h-5 w-5" />
-                            )}
+                    appointments
+                      .filter((a) => a.status === "Upcoming" || a.status === "In Progress")
+                      .slice(0, 4)
+                      .map((apt) => (
+                        <div
+                          key={apt.id}
+                          className="flex items-center justify-between p-3.5 rounded-[16px] bg-slate-50/70 hover:bg-white transition-all border border-slate-100 hover:border-slate-200 shadow-xs"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="h-10 w-10 rounded-[12px] bg-gradient-to-br from-[#14213D] to-[#35B7C9] flex items-center justify-center text-white font-extrabold text-xs shadow-sm shrink-0">
+                              {apt.avatar || "PT"}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-extrabold text-[#14213D] truncate">
+                                {apt.patient}
+                              </p>
+                              <p className="text-xs text-slate-500 font-semibold truncate">
+                                {apt.type} • {apt.time}
+                              </p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-extrabold text-[#14213D] truncate">
-                              {rpt.patient}
-                            </p>
-                            <p className="text-xs text-slate-500 font-semibold truncate">
-                              {rpt.report}
-                            </p>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              Node: {rpt.device}
-                            </span>
-                          </div>
-                        </div>
 
-                        <div className="text-right shrink-0">
-                          <span
-                            className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
-                              rpt.status === "Reviewed"
-                                ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                : "bg-amber-50 text-amber-600 border-amber-100"
-                            }`}
-                          >
-                            {rpt.status}
-                          </span>
-                          <p className="text-[10px] text-slate-400 font-semibold mt-1">
-                            {rpt.date}
-                          </p>
+                          <div className="shrink-0 flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() =>
+                                navigate(
+                                  `/dashboard/doctor/consultations?bookingId=${apt.bookingId}&autoJoin=true`,
+                                  {
+                                    state: {
+                                      bookingId: apt.bookingId,
+                                      patient: apt.patient,
+                                      autoJoin: true,
+                                    },
+                                  }
+                                )
+                              }
+                              className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white rounded-[12px] h-8 px-3 text-xs font-bold border-none shadow-sm hover:opacity-90 flex items-center gap-1"
+                            >
+                              <Video className="h-3.5 w-3.5" />
+                              Join
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      ))
                   )}
                 </div>
               </div>
 
-              {/* Regulatory Notice Banner */}
-              <div className="mt-5 p-3 rounded-[14px] bg-amber-50/80 border border-amber-200/80 text-[11px] text-amber-950 flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-amber-900">Clinical Screening Disclaimer: </span>
-                  Kiosk telemetry parameters are screening indicators. Confirm observations through in-person evaluation where warranted.
-                </div>
+              {/* Ready notice */}
+              <div className="mt-5 p-3 rounded-[14px] bg-emerald-50/80 border border-emerald-200/80 text-[11px] text-emerald-950 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span className="font-semibold text-emerald-900">
+                  Real-time synchronization active. New patient bookings update live without refreshing.
+                </span>
               </div>
             </div>
           </div>

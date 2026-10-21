@@ -1962,49 +1962,205 @@ const Consultations = () => {
               </div>
             </div>
 
-            {/* In-Call Notes & Telemetry Drawer (collapsible) */}
+            {/* In-Call Notes, Vitals & Patient Shared Reports Drawer (collapsible) */}
             {inCallNotesOpen && (
-              <div className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col p-4 z-20 animate-in slide-in-from-right duration-200">
+              <div className="w-88 md:w-96 bg-slate-900 border-l border-slate-800 flex flex-col p-4 z-20 animate-in slide-in-from-right duration-200">
+                {/* Header with Tab switcher */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-[#35B7C9]" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-200">Clinical Telemetry</span>
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setInCallDrawerTab("notes")}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        inCallDrawerTab === "notes"
+                          ? "bg-[#35B7C9] text-white shadow-sm"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>Notes & Vitals</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setInCallDrawerTab("reports");
+                        if (sharedReportsStatus === "idle") {
+                          fetchSharedReports(selected?.bookingId);
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        inCallDrawerTab === "reports"
+                          ? "bg-emerald-500 text-white shadow-sm"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      <span>Reports</span>
+                      {sharedReports.length > 0 && (
+                        <span className="bg-emerald-700 text-white text-[9px] px-1 rounded-full font-black">
+                          {sharedReports.length}
+                        </span>
+                      )}
+                    </button>
                   </div>
                   <button
                     onClick={() => setInCallNotesOpen(false)}
-                    className="text-xs text-slate-400 hover:text-white p-1"
+                    className="text-xs text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+                    title="Close Drawer"
                   >
                     ✕
                   </button>
                 </div>
 
-                {/* Vitals summary cards */}
-                <div className="grid grid-cols-3 gap-2 my-3">
-                  <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50">
-                    <p className="text-[10px] text-slate-400 font-medium">BP</p>
-                    <p className="text-xs font-mono font-bold text-emerald-400">{selected?.vitals?.bp || "120/80"}</p>
-                  </div>
-                  <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50">
-                    <p className="text-[10px] text-slate-400 font-medium">Pulse</p>
-                    <p className="text-xs font-mono font-bold text-rose-400">{selected?.vitals?.pulse || 72} bpm</p>
-                  </div>
-                  <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50">
-                    <p className="text-[10px] text-slate-400 font-medium">Temp</p>
-                    <p className="text-xs font-mono font-bold text-amber-400">{selected?.vitals?.temp || "98.6°F"}</p>
-                  </div>
-                </div>
+                {inCallDrawerTab === "notes" ? (
+                  <div className="flex-1 flex flex-col pt-3 overflow-hidden">
+                    {/* Vitals summary cards */}
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50 text-center">
+                        <p className="text-[10px] text-slate-400 font-medium">BP</p>
+                        <p className="text-xs font-mono font-bold text-emerald-400">{selected?.vitals?.bp || "120/80"}</p>
+                      </div>
+                      <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50 text-center">
+                        <p className="text-[10px] text-slate-400 font-medium">Pulse</p>
+                        <p className="text-xs font-mono font-bold text-rose-400">{selected?.vitals?.pulse || 72} bpm</p>
+                      </div>
+                      <div className="bg-slate-800/80 p-2 rounded-xl border border-slate-700/50 text-center">
+                        <p className="text-[10px] text-slate-400 font-medium">Temp</p>
+                        <p className="text-xs font-mono font-bold text-amber-400">{selected?.vitals?.temp || "98.6°F"}</p>
+                      </div>
+                    </div>
 
-                {/* Live Clinical Notes */}
-                <div className="flex-1 flex flex-col gap-2">
-                  <label className="text-[11px] font-semibold text-slate-300">Live Consultation Notes</label>
-                  <textarea
-                    value={inCallClinicalNotes}
-                    onChange={(e) => setInCallClinicalNotes(e.target.value)}
-                    placeholder="Document symptoms, patient complaint, examination findings..."
-                    className="flex-1 w-full bg-slate-950/80 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-[#35B7C9] resize-none font-sans"
-                  />
-                  <p className="text-[10px] text-slate-400 italic">Auto-appended to post-call electronic wrap-up slip.</p>
-                </div>
+                    {/* Live Clinical Notes */}
+                    <div className="flex-1 flex flex-col gap-2">
+                      <label className="text-[11px] font-semibold text-slate-300">Live Consultation Notes</label>
+                      <textarea
+                        value={inCallClinicalNotes}
+                        onChange={(e) => setInCallClinicalNotes(e.target.value)}
+                        placeholder="Document symptoms, patient complaint, examination findings..."
+                        className="flex-1 w-full bg-slate-950/80 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-[#35B7C9] resize-none font-sans"
+                      />
+                      <p className="text-[10px] text-slate-400 italic">Auto-appended to post-call electronic wrap-up slip.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col pt-3 overflow-y-auto space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> ABDM Shared Records
+                      </span>
+                      {sharedReportsStatus === "unlocked" && (
+                        <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold">
+                          Consent Verified
+                        </Badge>
+                      )}
+                    </div>
+
+                    {sharedReportsStatus === "loading" && (
+                      <div className="p-8 text-center bg-slate-950/60 rounded-xl flex flex-col items-center justify-center gap-2 border border-slate-800">
+                        <RefreshCw className="h-6 w-6 animate-spin text-[#35B7C9]" />
+                        <p className="text-xs text-slate-400">Verifying patient consent & fetching reports...</p>
+                      </div>
+                    )}
+
+                    {sharedReportsStatus === "declaration_required" && (
+                      <div className="p-4 bg-amber-950/40 border border-amber-600/50 rounded-2xl space-y-3">
+                        <div className="flex items-center gap-2 text-amber-300 font-bold text-xs">
+                          <Lock className="h-4 w-4" />
+                          <span>Doctor Privacy Declaration Required</span>
+                        </div>
+                        <p className="text-[11px] text-amber-200/90 leading-relaxed bg-black/40 p-3 rounded-xl border border-amber-600/30 font-medium italic">
+                          "{declarationText}"
+                        </p>
+                        <div className="flex items-start gap-2 pt-1">
+                          <input
+                            type="checkbox"
+                            id="incall-agreement-check"
+                            checked={agreementChecked}
+                            onChange={(e) => setAgreementChecked(e.target.checked)}
+                            className="mt-0.5 rounded border-amber-400 text-amber-500 h-3.5 w-3.5"
+                          />
+                          <label htmlFor="incall-agreement-check" className="text-[10px] text-amber-200 cursor-pointer leading-tight">
+                            I declare clinical purpose under NMC Telemedicine Guidelines and agree to confidentiality.
+                          </label>
+                        </div>
+                        <Button
+                          onClick={handleAgreeAndUnlock}
+                          disabled={!agreementChecked || agreeingDeclaration}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl h-9 text-xs shadow-md border-none"
+                        >
+                          {agreeingDeclaration ? "Recording Agreement..." : "I Agree & Unlock Reports"}
+                        </Button>
+                      </div>
+                    )}
+
+                    {sharedReportsStatus === "not_shared" && (
+                      <div className="p-6 text-center bg-slate-950/60 rounded-2xl border border-slate-800 space-y-2">
+                        <Lock className="h-6 w-6 text-slate-500 mx-auto" />
+                        <p className="text-xs font-bold text-slate-300">No Reports Shared</p>
+                        <p className="text-[11px] text-slate-400">
+                          The patient has not shared previous diagnostic reports for this consultation.
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => fetchSharedReports(selected?.bookingId)}
+                          className="mt-2 rounded-xl text-xs border-slate-700 text-slate-300 hover:bg-slate-800 h-8"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" /> Check Again
+                        </Button>
+                      </div>
+                    )}
+
+                    {sharedReportsStatus === "unlocked" && (
+                      <div className="space-y-2.5">
+                        {sharedReports.length === 0 ? (
+                          <div className="p-6 text-center bg-slate-950/60 rounded-2xl text-xs text-slate-400 border border-slate-800">
+                            No uploaded screening records found for this patient.
+                          </div>
+                        ) : (
+                          sharedReports.map((report: any, idx: number) => {
+                            const repId = report._id || report.id || `rep-${idx}`;
+                            const code = report.reportCode || `Report #${repId.slice(-6)}`;
+                            const dateStr = report.createdAt ? new Date(report.createdAt).toLocaleDateString() : "Recent";
+                            const fileUrl = report.fileUrl || report.url;
+
+                            return (
+                              <div
+                                key={repId}
+                                className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl hover:border-emerald-500/50 transition-all flex items-center justify-between gap-3 shadow-xs"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+                                    <FileText className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-slate-200 truncate">{code}</p>
+                                    <p className="text-[10px] text-slate-400">{dateStr} • Telemetry</p>
+                                  </div>
+                                </div>
+
+                                <div className="shrink-0 flex items-center gap-1.5">
+                                  {fileUrl ? (
+                                    <button
+                                      onClick={() => {
+                                        setPreviewReportUrl(fileUrl);
+                                        setPreviewReportTitle(code);
+                                      }}
+                                      className="px-2.5 py-1 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 transition-all"
+                                    >
+                                      <span>View</span>
+                                      <ExternalLink className="h-3 w-3" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-500 italic">No file attached</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2013,9 +2169,12 @@ const Consultations = () => {
           <div className="h-20 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-6 z-20">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setInCallNotesOpen(!inCallNotesOpen)}
+                onClick={() => {
+                  setInCallDrawerTab("notes");
+                  setInCallNotesOpen(inCallNotesOpen && inCallDrawerTab === "notes" ? false : true);
+                }}
                 className={`h-10 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold transition-all ${
-                  inCallNotesOpen
+                  inCallNotesOpen && inCallDrawerTab === "notes"
                     ? "bg-[#35B7C9] text-white shadow-md shadow-[#35B7C9]/30"
                     : "bg-slate-800 hover:bg-slate-700 text-slate-300"
                 }`}
@@ -2023,7 +2182,35 @@ const Consultations = () => {
                 <FileText className="h-4 w-4" />
                 <span>Notes & Vitals</span>
               </button>
+
+              <button
+                onClick={() => {
+                  setInCallDrawerTab("reports");
+                  const willOpen = !(inCallNotesOpen && inCallDrawerTab === "reports");
+                  setInCallNotesOpen(willOpen);
+                  if (willOpen && sharedReportsStatus === "idle") {
+                    fetchSharedReports(selected?.bookingId);
+                  }
+                }}
+                className={`h-10 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold transition-all ${
+                  inCallNotesOpen && inCallDrawerTab === "reports"
+                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/30"
+                    : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                }`}
+              >
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span>Patient Reports</span>
+                {sharedReports.length > 0 && (
+                  <Badge className="bg-emerald-600 text-white text-[9px] px-1.5 py-0 border-none font-black">
+                    {sharedReports.length}
+                  </Badge>
+                )}
+                {sharedReportsStatus === "declaration_required" && (
+                  <Lock className="h-3 w-3 text-amber-300" />
+                )}
+              </button>
             </div>
+
 
             <div className="flex items-center gap-3">
               <button
