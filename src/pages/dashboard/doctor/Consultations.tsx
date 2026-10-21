@@ -736,7 +736,7 @@ const Consultations = () => {
     }, 1000);
   };
 
-  const startAgoraCall = async (appId: string, channelName: string, token: string) => {
+  const startAgoraCall = async (appId: string, channelName: string, token: string, userUid?: number | string | null) => {
     try {
       setIsRealCall(true);
       setRemoteUserConnected(false);
@@ -788,8 +788,21 @@ const Consultations = () => {
       });
 
       const rtcToken = (token && !token.toLowerCase().includes("mock") && token.length > 30) ? token : null;
-      const uid = Math.floor(Math.random() * 1000000);
-      await client.join(appId, channelName, rtcToken, uid);
+      const targetUid = userUid !== undefined && userUid !== null ? userUid : Math.floor(Math.random() * 1000000);
+
+      try {
+        console.log(`[Agora RTC] Joining channel ${channelName} with uid=${targetUid}, token=${rtcToken ? "provided" : "null"}`);
+        await client.join(appId, channelName, rtcToken, targetUid);
+      } catch (joinErr: any) {
+        console.warn("[Agora RTC] Initial join with token failed:", joinErr);
+        if (rtcToken && (joinErr?.message?.includes("invalid token") || joinErr?.code === "CAN_NOT_GET_GATEWAY_SERVER" || String(joinErr).includes("authorized failed"))) {
+          console.log("[Agora RTC] Retrying join with token=null (Testing Mode / Certificate bypass)...");
+          await client.join(appId, channelName, null, targetUid);
+          console.log("[Agora RTC] Join with token=null succeeded!");
+        } else {
+          throw joinErr;
+        }
+      }
 
       try {
         let localAudio: any = null;
@@ -881,13 +894,14 @@ const Consultations = () => {
         };
       }
 
-      const token = res.token || "mock-token-xyz";
-      const channelName = res.channelName || `room-${targetBookingId}`;
+      const token = res?.token || "mock-token-xyz";
+      const channelName = res?.channelName || `room-${targetBookingId}`;
+      const backendUid = res?.uid !== undefined && res?.uid !== null ? res.uid : null;
       const envAppId = import.meta.env.VITE_AGORA_APP_ID;
-      const appId = (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
-        ? envAppId
-        : (res.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
+      const appId = (res?.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
         ? res.appId
+        : (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
+        ? envAppId
         : "mock-app-id";
 
       setVideoToken(token);
@@ -898,7 +912,7 @@ const Consultations = () => {
 
       const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
       if (isRealAgora) {
-        startAgoraCall(appId, channelName, token);
+        startAgoraCall(appId, channelName, token, backendUid);
       } else {
         startSimulatedCall();
       }
@@ -940,13 +954,14 @@ const Consultations = () => {
         };
       }
 
-      const token = res.token || "mock-token-xyz";
-      const channelName = res.channelName || `room-${targetBookingId}`;
+      const token = res?.token || "mock-token-xyz";
+      const channelName = res?.channelName || `room-${targetBookingId}`;
+      const backendUid = res?.uid !== undefined && res?.uid !== null ? res.uid : null;
       const envAppId = import.meta.env.VITE_AGORA_APP_ID;
-      const appId = (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
-        ? envAppId
-        : (res.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
+      const appId = (res?.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
         ? res.appId
+        : (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
+        ? envAppId
         : "mock-app-id";
 
       setVideoToken(token);
@@ -957,7 +972,7 @@ const Consultations = () => {
 
       const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
       if (isRealAgora) {
-        startAgoraCall(appId, channelName, token);
+        startAgoraCall(appId, channelName, token, backendUid);
       } else {
         startSimulatedCall();
       }
