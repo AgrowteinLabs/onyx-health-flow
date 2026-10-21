@@ -55,7 +55,7 @@ import { apiRequest } from "@/lib/api-request";
 import { listBookings } from "@/services/booking.service";
 import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
 import { listReports, listReportsByProfile } from "@/services/report.service";
-import { createPrescription, getSharedReports, agreeReportAccess } from "@/services/doctor.service";
+import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 
 interface Patient {
@@ -1190,10 +1190,51 @@ const Consultations = () => {
     setRemoteUserConnected(false);
     setRemoteVideoTrackActive(false);
 
-    // Call backend to update booking status to completed
-    const bId = selected?.bookingId;
+        // Call backend to update booking status to completed
+    const bId = selected?.bookingId || selected?.id;
     if (bId) {
-      apiRequest(`/api/booking/complete/${bId}`, { method: "POST" }).catch(() => null);
+      completeBooking(bId).catch(() => {
+        apiRequest(`/api/booking/complete/${bId}`, { method: "POST", data: { bookingId: bId } }).catch(() => null);
+      });
+
+      // Optimistically update patient in doctor's local state to Completed
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.bookingId === bId || p.id === bId ? { ...p, status: "Completed" } : p
+        )
+      );
+
+      // Notify Patient peer via PeerJS data connection
+      try {
+        const cleanRoomId = String(bId).replace(/[^a-zA-Z0-9_-]/g, "");
+        const conn = peerJSRef.current?.connect(`onyx-pat-${cleanRoomId}`);
+        if (conn) {
+          conn.on("open", () => {
+            conn.send({
+              type: "consultation-completed",
+              action: "consultation-completed",
+              bookingId: bId,
+            });
+            setTimeout(() => {
+              try { conn.close(); } catch { /* ignore */ }
+            }, 600);
+          });
+        }
+      } catch (e) {
+        console.debug("PeerJS notify completion note:", e);
+      }
+
+      // Notify Patient via BroadcastChannel
+      if (broadcastChannelRef.current) {
+        try {
+          broadcastChannelRef.current.postMessage({
+            type: "call-ended",
+            action: "consultation-completed",
+            bookingId: bId,
+            sender: "doctor",
+          });
+        } catch { /* ignore */ }
+      }
     }
 
     toast({
@@ -2022,7 +2063,12 @@ const Consultations = () => {
       </Dialog>
 
       {/* Consultation Wrap-Up & Digital Rx Dialog */}
-      <Dialog open={wrapUpOpen} onOpenChange={setWrapUpOpen}>
+      <Dialog open={wrapUpOpen} onOpenChange={(open) => {
+          setWrapUpOpen(open);
+          if (!open) {
+            fetchConsultationsData();
+          }
+        }}>
         <DialogContent className="max-w-xl p-6 rounded-[24px] bg-white border border-slate-100 shadow-2xl">
           <DialogHeader className="pb-3 border-b border-slate-100">
             <div className="flex items-center justify-between">
