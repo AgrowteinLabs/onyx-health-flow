@@ -268,11 +268,7 @@ const NAV: Record<string, any[]> = {
         icon: FileText,
         path: "/dashboard/doctor/prescriptions",
       },
-      {
-        label: "Screening Reports",
-        icon: Activity,
-        path: "/dashboard/doctor/reports",
-      },
+      
       {
         label: "Earnings & Payouts",
         icon: CreditCard,

@@ -64,13 +64,18 @@ export function useIncomingCallWatcher() {
       }
 
       // Find any booking that is actively in progress or calling
-      const ringingBooking = bookings.find((b: any) => {
+            const ringingBooking = bookings.find((b: any) => {
         const status = (b.status || "").toLowerCase();
+        const isInstantActive =
+          b.type === "instant" &&
+          (status === "confirmed" || status === "in_progress" || status === "active" || status === "calling" || status === "pending");
+
         const isCallingOrActive =
           status === "in_progress" ||
           status === "active" ||
           status === "calling" ||
           status === "in progress" ||
+          isInstantActive ||
           b.isCalling === true;
 
         return isCallingOrActive && !dismissedCallsRef.current.has(b._id || b.id);
@@ -148,7 +153,13 @@ export function useIncomingCallWatcher() {
             const data = JSON.parse(event.data);
             const eventType = data.type || data.event;
 
-            if (eventType === "consultation:incoming") {
+            if (
+              eventType === "consultation:incoming" ||
+              eventType === "booking:created" ||
+              eventType === "booking:scheduled" ||
+              eventType === "booking:confirmed"
+            ) {
+              window.dispatchEvent(new CustomEvent("onyx:refresh_dashboard", { detail: data }));
               const payload = data.payload || data;
               const bookingId = payload.bookingId || data.bookingId;
 
