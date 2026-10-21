@@ -278,6 +278,7 @@ const EA_UserHeads = () => {
   useEffect(() => {
     fetchUserHeads();
     fetchOrganizations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ================================
@@ -313,9 +314,12 @@ const EA_UserHeads = () => {
 
   useEffect(() => {
     let list = userHeads;
-    if (search.trim() !== "") {
+    const q = search.trim().toLowerCase();
+    if (q !== "") {
       list = list.filter((u) =>
-        u.name.toLowerCase().includes(search.toLowerCase())
+        u.name?.toLowerCase().includes(q) ||
+        u.phone_number?.join(" ").includes(q) ||
+        (u.organizationName || "").toLowerCase().includes(q)
       );
     }
     if (statusFilter !== "all") {

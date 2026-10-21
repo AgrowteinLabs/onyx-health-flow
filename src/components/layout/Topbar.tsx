@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { ChevronDown, ShieldCheck, Globe2, Smartphone, Bell, Search, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/api-request";
+import { listBookings } from "@/services/booking.service";
 
 interface UserData {
   _id: string;
@@ -58,9 +59,46 @@ const Topbar = () => {
     }
   };
 
+  const fetchDoctorNotifications = useCallback(async () => {
+    if (userRole === "doctor") {
+      try {
+        const bookingsRes = await listBookings().catch(() => null);
+        const list = Array.isArray(bookingsRes)
+          ? bookingsRes
+          : bookingsRes?.bookings || bookingsRes?.data || [];
+
+        if (list.length > 0) {
+          const mapped = list.slice(0, 4).map((b: any, index: number) => {
+            const pName =
+              b.profileId?.name ||
+              b.userId?.name ||
+              b.patientName ||
+              `Patient #${b._id?.slice(-4) || index + 1}`;
+            const isCalling =
+              (b.status || "").toLowerCase() === "in_progress" ||
+              (b.status || "").toLowerCase() === "active";
+
+            return {
+              id: b._id || index + 1,
+              title: isCalling ? "Incoming Consultation Call" : "Telehealth Booking",
+              desc: `${pName} · ${b.slot || "Today"} (${b.type || "General Consult"})`,
+              time: isCalling ? "Calling Now" : "Scheduled",
+              read: false,
+              color: isCalling ? "#F2052C" : "#35B7C9",
+            };
+          });
+          setNotifications(mapped);
+        }
+      } catch {
+        // Fallback to defaults
+      }
+    }
+  }, [userRole]);
+
   useEffect(() => {
     fetchUser();
-  }, []);
+    fetchDoctorNotifications();
+  }, [fetchDoctorNotifications]);
 
   useEffect(() => {
     if (searchOpen && searchRef.current) {

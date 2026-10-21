@@ -19,6 +19,9 @@ import {
   Video,
   CreditCard,
   ShieldCheck,
+  User,
+  Bell,
+  LifeBuoy,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -246,12 +249,17 @@ const NAV: Record<string, any[]> = {
         path: "/dashboard/doctor",
       },
       {
-        label: "Schedule",
+        label: "My Profile",
+        icon: User,
+        path: "/dashboard/doctor/profile",
+      },
+      {
+        label: "Schedule & Availability",
         icon: Calendar,
         path: "/dashboard/doctor/schedule",
       },
       {
-        label: "Consultations",
+        label: "Video Consultations",
         icon: Video,
         path: "/dashboard/doctor/consultations",
       },
@@ -261,17 +269,32 @@ const NAV: Record<string, any[]> = {
         path: "/dashboard/doctor/prescriptions",
       },
       {
-        label: "Reports",
-        icon: FileText,
+        label: "Screening Reports",
+        icon: Activity,
         path: "/dashboard/doctor/reports",
       },
       {
-        label: "Payments",
+        label: "Earnings & Payouts",
         icon: CreditCard,
         path: "/dashboard/doctor/payments",
       },
       {
-        label: "Onboarding Profile",
+        label: "Support & Tickets",
+        icon: LifeBuoy,
+        path: "/dashboard/doctor/tickets",
+      },
+      {
+        label: "Notifications",
+        icon: Bell,
+        path: "/dashboard/doctor/notifications",
+      },
+      {
+        label: "Settings",
+        icon: Settings,
+        path: "/dashboard/doctor/settings",
+      },
+      {
+        label: "Onboarding Wizard",
         icon: ShieldCheck,
         path: "/dashboard/doctor/onboarding",
       },
@@ -506,7 +529,7 @@ const Sidebar = () => {
               <p className="text-xs font-extrabold text-[#14213D] truncate leading-tight">
                 {localStorage.getItem("userName") || "User"}
               </p>
-              <p className="text-[10px] font-bold text-[#35B7C9] uppercase tracking-wider capitalize mt-0.5">
+              <p className="text-[10px] font-bold text-[#35B7C9] uppercase tracking-wider mt-0.5">
                 {(localStorage.getItem("userRole") || "").replace(/-/g, " ")}
               </p>
             </div>

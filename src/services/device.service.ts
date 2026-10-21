@@ -12,7 +12,7 @@ export const createDevice = (data: any) =>
   });
 
 export const deleteDevice = (id: string) =>
-  apiRequest(`/delete/profile/${id}`, { method: "DELETE" });
+  apiRequest(`/delete/product/${id}`, { method: "DELETE" });
 
 export const toggleDeviceStatus = (id: string, status: string) =>
   apiRequest("/api/inactive/all/entity/toggle-status", {
