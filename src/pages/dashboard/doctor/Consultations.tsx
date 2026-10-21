@@ -128,6 +128,13 @@ const Consultations = () => {
   const [micActive, setMicActive] = useState(true);
   const [cameraActive, setCameraActive] = useState(true);
 
+  // Real media stream & WebRTC peer connection refs
+  const localVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnRef = useRef<RTCPeerConnection | null>(null);
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
   // Agora states & refs
   const clientRef = useRef<IAgoraRTCClient | null>(null);
   const localAudioRef = useRef<IMicrophoneAudioTrack | null>(null);
@@ -545,6 +552,178 @@ const Consultations = () => {
     return `${m}:${s}`;
   };
 
+  const startLocalMedia = async () => {
+    try {
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: true,
+      });
+      localStreamRef.current = stream;
+      if (localVideoElRef.current) {
+        localVideoElRef.current.srcObject = stream;
+        localVideoElRef.current.play().catch(() => {});
+      }
+      return stream;
+    } catch (err) {
+      console.warn("Could not acquire local camera/mic:", err);
+      toast({
+        title: "Camera and Mic Notice",
+        description: "Operating in receive-only mode or permissions not granted.",
+      });
+      return null;
+    }
+  };
+
+  const setupWebRTCPeer = (targetRoomId: string, role: "patient" | "doctor", localStream: MediaStream | null) => {
+    try {
+      if (broadcastChannelRef.current) {
+        broadcastChannelRef.current.close();
+      }
+      if (peerConnRef.current) {
+        peerConnRef.current.close();
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+        ],
+      });
+      peerConnRef.current = pc;
+
+      const candidateQueue: RTCIceCandidateInit[] = [];
+
+      if (localStream) {
+        localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, localStream);
+        });
+      }
+
+      pc.ontrack = (event) => {
+        console.log("WebRTC ontrack received remote stream on doctor:", event.streams[0]);
+        if (event.streams && event.streams[0]) {
+          const stream = event.streams[0];
+          (remoteVideoElRef as any)._stream = stream;
+          if (remoteVideoElRef.current) {
+            remoteVideoElRef.current.srcObject = stream;
+            remoteVideoElRef.current.play().catch(() => {});
+          }
+          setRemoteUserConnected(true);
+          setRemoteVideoTrackActive(true);
+          toast({ title: "Patient connected via live video feed" });
+        }
+      };
+
+      const primaryChannel = new BroadcastChannel(`onyx-telehealth-${targetRoomId}`);
+      const fallbackChannel = new BroadcastChannel("onyx-telehealth-active-session");
+      broadcastChannelRef.current = primaryChannel;
+
+      const sendSignal = (data: any) => {
+        try { primaryChannel.postMessage(data); } catch { /* ignore */ }
+        try { fallbackChannel.postMessage(data); } catch { /* ignore */ }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignal({
+            type: "webrtc-candidate",
+            candidate: event.candidate,
+            sender: role,
+          });
+        }
+      };
+
+      const handleSignalMessage = async (event: MessageEvent) => {
+        const data = event.data || {};
+        if (data.sender === role) return;
+
+        if (data.type === "peer-joined" || data.type === "patient-ready") {
+          // Doctor initiates the WebRTC offer (prevents glare)
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSignal({
+              type: "webrtc-offer",
+              sdp: offer,
+              sender: role,
+            });
+          } catch (err) {
+            console.warn("Error creating WebRTC offer on doctor:", err);
+          }
+        } else if (data.type === "webrtc-offer" && role === "patient") {
+          // Doctor receives answer, but if patient sent offer, doctor answers
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            while (candidateQueue.length > 0) {
+              const c = candidateQueue.shift();
+              if (c) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+            }
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendSignal({
+              type: "webrtc-answer",
+              sdp: answer,
+              sender: role,
+            });
+            setRemoteUserConnected(true);
+            setRemoteVideoTrackActive(true);
+          } catch (err) {
+            console.warn("Error handling WebRTC offer:", err);
+          }
+        } else if (data.type === "webrtc-answer") {
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            while (candidateQueue.length > 0) {
+              const c = candidateQueue.shift();
+              if (c) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+            }
+            setRemoteUserConnected(true);
+            setRemoteVideoTrackActive(true);
+          } catch (err) {
+            console.warn("Error setting remote description on doctor:", err);
+          }
+        } else if (data.type === "webrtc-candidate") {
+          try {
+            if (data.candidate) {
+              if (pc.remoteDescription && pc.remoteDescription.type) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } else {
+                candidateQueue.push(data.candidate);
+              }
+            }
+          } catch (err) {
+            console.debug("Error adding ICE candidate:", err);
+          }
+        } else if (data.type === "call-ended") {
+          setRemoteUserConnected(false);
+          setRemoteVideoTrackActive(false);
+        }
+      };
+
+      primaryChannel.onmessage = handleSignalMessage;
+      fallbackChannel.onmessage = handleSignalMessage;
+
+      // Announce doctor joined & create proactive offer if patient already listening
+      sendSignal({ type: "peer-joined", sender: role });
+      setTimeout(async () => {
+        if (pc.signalingState === "stable") {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSignal({ type: "webrtc-offer", sdp: offer, sender: role });
+          } catch { /* wait for patient-ready */ }
+        }
+      }, 500);
+
+    } catch (err) {
+      console.warn("WebRTC setup note:", err);
+    }
+  };
+
   const startSimulatedCall = () => {
     setIsRealCall(false);
     setRemoteUserConnected(true);
@@ -656,7 +835,11 @@ const Consultations = () => {
       setVideoToken(token);
       setInVideoCall(true);
 
-      if (appId && appId !== "mock-app-id") {
+      const localStream = await startLocalMedia();
+      setupWebRTCPeer(targetBookingId, "doctor", localStream);
+
+      const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
+      if (isRealAgora) {
         startAgoraCall(appId, channelName, token);
       } else {
         startSimulatedCall();
@@ -696,7 +879,11 @@ const Consultations = () => {
       setVideoToken(token);
       setInVideoCall(true);
 
-      if (appId && appId !== "mock-app-id") {
+      const localStream = await startLocalMedia();
+      setupWebRTCPeer(targetBookingId, "doctor", localStream);
+
+      const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
+      if (isRealAgora) {
         startAgoraCall(appId, channelName, token);
       } else {
         startSimulatedCall();
@@ -746,8 +933,20 @@ const Consultations = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patients, location.state]);
 
+  useEffect(() => {
+    if (inVideoCall && localStreamRef.current && localVideoElRef.current) {
+      localVideoElRef.current.srcObject = localStreamRef.current;
+      localVideoElRef.current.play().catch(() => {});
+    }
+  }, [inVideoCall]);
+
   const handleEndCall = async () => {
-    if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+
+    // Agora cleanup
     if (localAudioRef.current) {
       localAudioRef.current.stop();
       localAudioRef.current.close();
@@ -759,8 +958,37 @@ const Consultations = () => {
       localVideoRef.current = null;
     }
     if (clientRef.current) {
-      await clientRef.current.leave();
+      try {
+        await clientRef.current.leave();
+      } catch (e) {
+        console.debug("Agora leave note:", e);
+      }
       clientRef.current = null;
+    }
+
+    // Native WebRTC & stream cleanup
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    if (localVideoElRef.current) {
+      localVideoElRef.current.srcObject = null;
+    }
+    if (remoteVideoElRef.current) {
+      remoteVideoElRef.current.srcObject = null;
+    }
+    if (peerConnRef.current) {
+      peerConnRef.current.close();
+      peerConnRef.current = null;
+    }
+    if (broadcastChannelRef.current) {
+      try {
+        broadcastChannelRef.current.postMessage({ type: "peer-left", role: "doctor" });
+        broadcastChannelRef.current.close();
+      } catch (e) {
+        console.debug("BroadcastChannel close note:", e);
+      }
+      broadcastChannelRef.current = null;
     }
 
     setInVideoCall(false);
@@ -835,6 +1063,9 @@ const Consultations = () => {
   const toggleMic = async () => {
     const nextState = !micActive;
     setMicActive(nextState);
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = nextState));
+    }
     if (localAudioRef.current) {
       try {
         await localAudioRef.current.setEnabled(nextState);
@@ -847,6 +1078,9 @@ const Consultations = () => {
   const toggleCamera = async () => {
     const nextState = !cameraActive;
     setCameraActive(nextState);
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = nextState));
+    }
     if (localVideoRef.current) {
       try {
         await localVideoRef.current.setEnabled(nextState);
@@ -1419,6 +1653,20 @@ const Consultations = () => {
             {/* Main Video Viewport */}
             <div className="relative flex-1 h-full transition-all duration-300 flex items-center justify-center">
               <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
+                <video
+                  ref={(el) => {
+                    remoteVideoElRef.current = el;
+                    if (el && (remoteVideoElRef as any)._stream) {
+                      el.srcObject = (remoteVideoElRef as any)._stream;
+                      el.play().catch(() => {});
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  className={`w-full h-full object-cover transition-opacity duration-300 ${
+                    remoteVideoTrackActive && remoteUserConnected ? "opacity-100 block" : "opacity-0 hidden"
+                  }`}
+                />
                 {!remoteVideoTrackActive && (
                   <div className="flex flex-col items-center justify-center h-full text-slate-400">
                     <div className="h-20 w-20 rounded-full bg-slate-800 flex items-center justify-center mb-3">
@@ -1435,7 +1683,20 @@ const Consultations = () => {
 
               {/* Self Video (PiP) */}
               <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[16px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
-                <div id="local-video" className="w-full h-full object-cover">
+                <div id="local-video" className="w-full h-full object-cover relative">
+                  <video
+                    ref={(el) => {
+                      localVideoElRef.current = el;
+                      if (el && localStreamRef.current) {
+                        el.srcObject = localStreamRef.current;
+                        el.play().catch(() => {});
+                      }
+                    }}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
+                  />
                   {!cameraActive && (
                     <div className="flex flex-col items-center justify-center h-full text-slate-500 text-xs">
                       <VideoOff className="h-6 w-6 mb-1 text-slate-600" />
