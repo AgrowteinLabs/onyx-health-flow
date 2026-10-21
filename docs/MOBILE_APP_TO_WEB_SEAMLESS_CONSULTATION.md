@@ -13,7 +13,7 @@ In the current workflow:
 1. A patient performs an offline/kiosk health screening on the **Onyx Mobile App**.
 2. Screening results (BP, SpO2, Pulse, BMI, ECG) are generated.
 3. The patient taps **"Online Consultation"** in the app.
-4. The mobile app launches the web browser (`https://patient.onyxhealthplus.com/...`).
+4. The mobile app launches the web browser (`https://myhealth.onyxhealthplus.com/...`).
 5. **The Problem:** The mobile browser does not have the patient's authenticated JWT session. As a result:
    - The patient is redirected to the **Login Screen**.
    - The patient must re-enter their credentials/OTP.
@@ -41,7 +41,7 @@ sequenceDiagram
     Patient->>App: 1. Views screening report & taps "Start Online Consultation"
     App->>Backend: 2. POST /api/auth/consultation-handshake (App JWT + reportId)
     Backend->>Backend: 3. Create HandshakeTicket in DB (TTL: 120s, Single-Use)
-    Backend-->>App: 4. Returns { redirectUrl: "https://patient.onyxhealthplus.com/handover?ticket=tkt_98fa..." }
+    Backend-->>App: 4. Returns { redirectUrl: "https://myhealth.onyxhealthplus.com/handover?ticket=tkt_98fa..." }
     App->>Browser: 5. Opens URL via InAppBrowser / Chrome Custom Tabs
     Browser->>Backend: 6. POST /api/auth/consume-handshake { ticket: "tkt_98fa..." }
     Backend->>Backend: 7. Atomically validates & deletes ticket (Replay-Proof)
@@ -154,7 +154,7 @@ const createConsultationHandshake = async (req, res) => {
     });
 
     // 4. Construct deep-link redirect URL
-    const patientWebBaseUrl = process.env.PATIENT_WEB_URL || 'https://patient.onyxhealthplus.com';
+    const patientWebBaseUrl = process.env.PATIENT_WEB_URL || 'https://myhealth.onyxhealthplus.com';
     const redirectUrl = `${patientWebBaseUrl}/handover?ticket=${ticket}`;
 
     return res.status(200).json({
@@ -440,7 +440,7 @@ curl -X POST https://dev-api.onyxhealthplus.com/api/auth/consultation-handshake 
   -d '{"reportId": "6ad874c7703f3d2233088660", "doctorId": "6a47d909f718c2c2cf25cc35"}'
 
 # Response:
-# { "status": "success", "ticket": "tkt_a1b2c3d4...", "redirectUrl": "https://patient.onyxhealthplus.com/handover?ticket=tkt_a1b2c3d4..." }
+# { "status": "success", "ticket": "tkt_a1b2c3d4...", "redirectUrl": "https://myhealth.onyxhealthplus.com/handover?ticket=tkt_a1b2c3d4..." }
 
 # 2. Web App consumes ticket
 curl -X POST https://dev-api.onyxhealthplus.com/api/auth/consume-handshake \
