@@ -145,15 +145,6 @@ const Consultations = () => {
   const [callDuration, setCallDuration] = useState(0);
   const durationTimerRef = useRef<any>(null);
 
-  // Native WebRTC & Local Media Fallback refs (ensures camera and peer streams always render)
-  const localVideoContainerRef = useRef<HTMLDivElement>(null);
-  const remoteVideoContainerRef = useRef<HTMLDivElement>(null);
-  const localVideoElementRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoElementRef = useRef<HTMLVideoElement>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
-
   // In-Call Live Notes & Post-Consultation Wrap-Up States
   const [inCallNotesOpen, setInCallNotesOpen] = useState(false);
   const [inCallClinicalNotes, setInCallClinicalNotes] = useState("");
@@ -599,9 +590,12 @@ const Consultations = () => {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
         ],
       });
       peerConnRef.current = pc;
+
+      const candidateQueue: RTCIceCandidateInit[] = [];
 
       if (localStream) {
         localStream.getTracks().forEach((track) => {
@@ -610,23 +604,32 @@ const Consultations = () => {
       }
 
       pc.ontrack = (event) => {
-        console.log("WebRTC ontrack received remote video on doctor:", event.streams[0]);
+        console.log("WebRTC ontrack received remote stream on doctor:", event.streams[0]);
         if (event.streams && event.streams[0]) {
+          const stream = event.streams[0];
+          (remoteVideoElRef as any)._stream = stream;
           if (remoteVideoElRef.current) {
-            remoteVideoElRef.current.srcObject = event.streams[0];
+            remoteVideoElRef.current.srcObject = stream;
             remoteVideoElRef.current.play().catch(() => {});
           }
           setRemoteUserConnected(true);
           setRemoteVideoTrackActive(true);
+          toast({ title: "Patient connected via live video feed" });
         }
       };
 
-      const bc = new BroadcastChannel(`onyx-telehealth-${targetRoomId}`);
-      broadcastChannelRef.current = bc;
+      const primaryChannel = new BroadcastChannel(`onyx-telehealth-${targetRoomId}`);
+      const fallbackChannel = new BroadcastChannel("onyx-telehealth-active-session");
+      broadcastChannelRef.current = primaryChannel;
+
+      const sendSignal = (data: any) => {
+        try { primaryChannel.postMessage(data); } catch { /* ignore */ }
+        try { fallbackChannel.postMessage(data); } catch { /* ignore */ }
+      };
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          bc.postMessage({
+          sendSignal({
             type: "webrtc-candidate",
             candidate: event.candidate,
             sender: role,
@@ -634,15 +637,16 @@ const Consultations = () => {
         }
       };
 
-      bc.onmessage = async (event) => {
+      const handleSignalMessage = async (event: MessageEvent) => {
         const data = event.data || {};
         if (data.sender === role) return;
 
-        if (data.type === "peer-joined") {
+        if (data.type === "peer-joined" || data.type === "patient-ready") {
+          // Doctor initiates the WebRTC offer (prevents glare)
           try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            bc.postMessage({
+            sendSignal({
               type: "webrtc-offer",
               sdp: offer,
               sender: role,
@@ -650,12 +654,17 @@ const Consultations = () => {
           } catch (err) {
             console.warn("Error creating WebRTC offer on doctor:", err);
           }
-        } else if (data.type === "webrtc-offer") {
+        } else if (data.type === "webrtc-offer" && role === "patient") {
+          // Doctor receives answer, but if patient sent offer, doctor answers
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            while (candidateQueue.length > 0) {
+              const c = candidateQueue.shift();
+              if (c) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+            }
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            bc.postMessage({
+            sendSignal({
               type: "webrtc-answer",
               sdp: answer,
               sender: role,
@@ -663,20 +672,28 @@ const Consultations = () => {
             setRemoteUserConnected(true);
             setRemoteVideoTrackActive(true);
           } catch (err) {
-            console.warn("Error answering WebRTC offer:", err);
+            console.warn("Error handling WebRTC offer:", err);
           }
         } else if (data.type === "webrtc-answer") {
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            while (candidateQueue.length > 0) {
+              const c = candidateQueue.shift();
+              if (c) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+            }
             setRemoteUserConnected(true);
             setRemoteVideoTrackActive(true);
           } catch (err) {
-            console.warn("Error setting remote description:", err);
+            console.warn("Error setting remote description on doctor:", err);
           }
         } else if (data.type === "webrtc-candidate") {
           try {
             if (data.candidate) {
-              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              if (pc.remoteDescription && pc.remoteDescription.type) {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } else {
+                candidateQueue.push(data.candidate);
+              }
             }
           } catch (err) {
             console.debug("Error adding ICE candidate:", err);
@@ -687,7 +704,20 @@ const Consultations = () => {
         }
       };
 
-      bc.postMessage({ type: "peer-joined", sender: role });
+      primaryChannel.onmessage = handleSignalMessage;
+      fallbackChannel.onmessage = handleSignalMessage;
+
+      // Announce doctor joined & create proactive offer if patient already listening
+      sendSignal({ type: "peer-joined", sender: role });
+      setTimeout(async () => {
+        if (pc.signalingState === "stable") {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSignal({ type: "webrtc-offer", sdp: offer, sender: role });
+          } catch { /* wait for patient-ready */ }
+        }
+      }, 500);
 
     } catch (err) {
       console.warn("WebRTC setup note:", err);
@@ -941,15 +971,15 @@ const Consultations = () => {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
-    if (localVideoElementRef.current) {
-      localVideoElementRef.current.srcObject = null;
+    if (localVideoElRef.current) {
+      localVideoElRef.current.srcObject = null;
     }
-    if (remoteVideoElementRef.current) {
-      remoteVideoElementRef.current.srcObject = null;
+    if (remoteVideoElRef.current) {
+      remoteVideoElRef.current.srcObject = null;
     }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
+    if (peerConnRef.current) {
+      peerConnRef.current.close();
+      peerConnRef.current = null;
     }
     if (broadcastChannelRef.current) {
       try {
@@ -1624,7 +1654,13 @@ const Consultations = () => {
             <div className="relative flex-1 h-full transition-all duration-300 flex items-center justify-center">
               <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
                 <video
-                  ref={remoteVideoElRef}
+                  ref={(el) => {
+                    remoteVideoElRef.current = el;
+                    if (el && (remoteVideoElRef as any)._stream) {
+                      el.srcObject = (remoteVideoElRef as any)._stream;
+                      el.play().catch(() => {});
+                    }
+                  }}
                   autoPlay
                   playsInline
                   className={`w-full h-full object-cover transition-opacity duration-300 ${
@@ -1649,11 +1685,17 @@ const Consultations = () => {
               <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[16px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
                 <div id="local-video" className="w-full h-full object-cover relative">
                   <video
-                    ref={localVideoElRef}
+                    ref={(el) => {
+                      localVideoElRef.current = el;
+                      if (el && localStreamRef.current) {
+                        el.srcObject = localStreamRef.current;
+                        el.play().catch(() => {});
+                      }
+                    }}
                     autoPlay
                     muted
                     playsInline
-                    className={`w-full h-full object-cover ${cameraActive ? "block" : "hidden"}`}
+                    className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
                   />
                   {!cameraActive && (
                     <div className="flex flex-col items-center justify-center h-full text-slate-500 text-xs">
