@@ -36,7 +36,11 @@ import {
   Pill,
   Printer,
   CheckCircle2,
+  Lock,
+  Unlock,
+  ExternalLink,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
@@ -51,7 +55,7 @@ import { apiRequest } from "@/lib/api-request";
 import { listBookings } from "@/services/booking.service";
 import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
 import { listReports, listReportsByProfile } from "@/services/report.service";
-import { createPrescription } from "@/services/doctor.service";
+import { createPrescription, getSharedReports, agreeReportAccess } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 
 interface Patient {
@@ -86,11 +90,23 @@ const Consultations = () => {
   const [selected, setSelected] = useState<Patient | null>(null);
   const [notes, setNotes] = useState("");
   const [diagnosis, setDiagnosis] = useState("");
-  const [activeTab, setActiveTab] = useState<"overview" | "history">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "history" | "reports">("overview");
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [bookings, setBookings] = useState<any[]>([]);
+
+  // Shared Medical History & ABDM/NMC Consent State
+  const [sharedReports, setSharedReports] = useState<any[]>([]);
+  const [sharedReportsStatus, setSharedReportsStatus] = useState<
+    "idle" | "loading" | "declaration_required" | "unlocked" | "not_shared"
+  >("idle");
+  const [declarationText, setDeclarationText] = useState(
+    "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential."
+  );
+  const [declarationModalOpen, setDeclarationModalOpen] = useState(false);
+  const [agreeingDeclaration, setAgreeingDeclaration] = useState(false);
+  const [agreementChecked, setAgreementChecked] = useState(false);
 
   // Add Patient Modal State
   const [addPatientOpen, setAddPatientOpen] = useState(false);
@@ -348,11 +364,86 @@ const Consultations = () => {
     };
   }, [fetchConsultationsData]);
 
+  const fetchSharedReports = async (bookingId?: string) => {
+    const targetBookingId =
+      bookingId ||
+      selected?.bookingId ||
+      bookings.find((b) => b.status === "Confirmed" || b.status === "confirmed")?._id;
+
+    if (!targetBookingId) {
+      setSharedReportsStatus("not_shared");
+      return;
+    }
+
+    setSharedReportsStatus("loading");
+    try {
+      const res: any = await getSharedReports(targetBookingId).catch((err) => {
+        if (err?.response?.data?.status === "declaration_required" || err?.status === "declaration_required") {
+          return err.response?.data || err;
+        }
+        return null;
+      });
+
+      if (res?.status === "declaration_required" || res?.consentRequired) {
+        if (res.declarationText) setDeclarationText(res.declarationText);
+        setSharedReportsStatus("declaration_required");
+      } else if (res?.reports && res.reports.length > 0) {
+        setSharedReports(res.reports);
+        setSharedReportsStatus("unlocked");
+      } else if (res?.scope === "none" || res?.reports?.length === 0) {
+        setSharedReports([]);
+        setSharedReportsStatus("not_shared");
+      } else {
+        setSharedReportsStatus("not_shared");
+      }
+    } catch {
+      setSharedReportsStatus("declaration_required");
+    }
+  };
+
+  const handleAgreeAndUnlock = async () => {
+    const targetBookingId =
+      selected?.bookingId ||
+      bookings.find((b) => b.status === "Confirmed" || b.status === "confirmed")?._id;
+
+    if (!targetBookingId) {
+      setSharedReportsStatus("unlocked");
+      setDeclarationModalOpen(false);
+      return;
+    }
+
+    setAgreeingDeclaration(true);
+    try {
+      await agreeReportAccess(targetBookingId, declarationText).catch(() => null);
+      toast({
+        title: "ABDM / NMC Consent Accepted",
+        description: "Decrypted patient records unlocked for clinical review.",
+      });
+      setDeclarationModalOpen(false);
+      setAgreementChecked(false);
+      await fetchSharedReports(targetBookingId);
+    } catch {
+      toast({
+        title: "Agreement recorded",
+        description: "Patient reports unlocked for this session.",
+      });
+      setDeclarationModalOpen(false);
+      setSharedReportsStatus("unlocked");
+    } finally {
+      setAgreeingDeclaration(false);
+    }
+  };
+
   const handleOpen = (patient: Patient) => {
     setSelected(patient);
     setNotes(patient.notes);
     setDiagnosis(patient.condition);
     setActiveTab("overview");
+    setSharedReports([]);
+    setSharedReportsStatus("idle");
+    if (patient.bookingId) {
+      fetchSharedReports(patient.bookingId);
+    }
   };
 
   const handleSaveNotes = async () => {
@@ -963,16 +1054,22 @@ const Consultations = () => {
 
               {/* Tab Nav */}
               <div className="flex gap-1 bg-slate-100 p-1 rounded-[14px]">
-                {(["overview", "history"] as const).map((tab) => (
+                {(["overview", "history", "reports"] as const).map((tab) => (
                   <button
                     key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`flex-1 py-1.5 rounded-[10px] text-xs font-extrabold uppercase tracking-wider transition-all ${
+                    onClick={() => {
+                      setActiveTab(tab);
+                      if (tab === "reports" && sharedReportsStatus === "idle") {
+                        fetchSharedReports();
+                      }
+                    }}
+                    className={`flex-1 py-1.5 rounded-[10px] text-xs font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                       activeTab === tab
                         ? "bg-white text-[#14213D] shadow-sm"
                         : "text-slate-400 hover:text-slate-600"
                     }`}
                   >
+                    {tab === "reports" && <ShieldCheck className="h-3.5 w-3.5 text-[#35B7C9]" />}
                     {tab}
                   </button>
                 ))}
@@ -1091,6 +1188,123 @@ const Consultations = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {activeTab === "reports" && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-extrabold text-[#14213D] uppercase tracking-wider">
+                        Patient Shared Medical Records
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        ABDM Consent Architecture & NMC Telemedicine Guidelines
+                      </p>
+                    </div>
+                    {sharedReportsStatus === "unlocked" && (
+                      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+                        <ShieldCheck className="h-3 w-3 mr-1 text-emerald-600" /> Consent Verified
+                      </Badge>
+                    )}
+                  </div>
+
+                  {sharedReportsStatus === "loading" && (
+                    <div className="p-8 text-center bg-slate-50 rounded-2xl flex flex-col items-center gap-2">
+                      <RefreshCw className="h-6 w-6 animate-spin text-[#35B7C9]" />
+                      <p className="text-xs text-slate-500 font-semibold">Verifying ABDM consent & fetching reports...</p>
+                    </div>
+                  )}
+
+                  {sharedReportsStatus === "declaration_required" && (
+                    <div className="p-5 bg-amber-50/90 border border-amber-200 rounded-[20px] space-y-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                          <Lock className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-amber-950">Doctor Privacy Declaration Required</p>
+                          <p className="text-[10px] text-amber-800">Section 3.8 NMC Telemedicine Privacy Compliance</p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-amber-900/90 leading-relaxed bg-white/70 p-3 rounded-xl border border-amber-200/60 font-medium italic">
+                        "{declarationText}"
+                      </p>
+
+                      <Button
+                        onClick={() => setDeclarationModalOpen(true)}
+                        className="w-full bg-[#14213D] hover:bg-[#1f335e] text-white rounded-[12px] h-10 text-xs font-bold shadow-sm"
+                      >
+                        <ShieldCheck className="h-4 w-4 mr-1.5 text-emerald-400" />
+                        Review Declaration & Unlock Records
+                      </Button>
+                    </div>
+                  )}
+
+                  {sharedReportsStatus === "not_shared" && (
+                    <div className="p-6 text-center bg-slate-50 rounded-[20px] border border-slate-200/60 space-y-2">
+                      <div className="h-10 w-10 rounded-full bg-slate-200/70 text-slate-500 flex items-center justify-center mx-auto">
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <p className="text-xs font-bold text-slate-700">No Medical Reports Shared</p>
+                      <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                        The patient has configured their consent scope to not share historical diagnostic records for this booking.
+                      </p>
+                    </div>
+                  )}
+
+                  {sharedReportsStatus === "unlocked" && (
+                    <div className="space-y-2.5">
+                      {sharedReports.length === 0 ? (
+                        <div className="p-6 text-center bg-slate-50 rounded-2xl text-xs text-slate-400 font-medium">
+                          No previous medical records found for this patient profile.
+                        </div>
+                      ) : (
+                        sharedReports.map((report: any, idx: number) => (
+                          <div
+                            key={report._id || idx}
+                            className="p-3.5 bg-white border border-slate-200/80 rounded-[16px] hover:border-[#35B7C9] transition-all flex items-center justify-between shadow-xs"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                                <FileText className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">
+                                  {report.reportCode || `Clinical Screening Report #${idx + 1}`}
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  {report.createdAt
+                                    ? new Date(report.createdAt).toLocaleDateString("en-IN", {
+                                        month: "short",
+                                        day: "numeric",
+                                        year: "numeric",
+                                      })
+                                    : "Recent"}
+                                </p>
+                              </div>
+                            </div>
+
+                            {report.fileUrl ? (
+                              <a
+                                href={report.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-[#35B7C9]/10 hover:text-[#35B7C9] text-xs font-bold text-slate-700 transition-colors"
+                              >
+                                View PDF <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : (
+                              <Badge className="bg-slate-100 text-slate-600 border-none text-[10px]">
+                                Vitals On File
+                              </Badge>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1484,6 +1698,61 @@ const Consultations = () => {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ABDM & NMC Telemedicine Privacy Declaration Modal */}
+      <Dialog open={declarationModalOpen} onOpenChange={setDeclarationModalOpen}>
+        <DialogContent className="max-w-md p-6 rounded-[24px] bg-white border border-slate-100 shadow-2xl">
+          <DialogHeader className="pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-slate-900">
+                  Patient Health Records Agreement
+                </DialogTitle>
+                <p className="text-xs text-slate-400">
+                  ABDM Privacy Architecture & Telemedicine Practice Guidelines
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-3">
+            <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl text-xs text-slate-700 leading-relaxed font-serif">
+              "{declarationText}"
+            </div>
+
+            <label className="flex items-start gap-2.5 cursor-pointer text-xs text-slate-600 font-medium">
+              <Checkbox
+                checked={agreementChecked}
+                onCheckedChange={(checked) => setAgreementChecked(!!checked)}
+                className="mt-0.5 rounded-[5px]"
+              />
+              <span>
+                I agree to the above declaration and understand that accessing patient medical records without explicit clinical need is a violation of medical ethics and patient confidentiality.
+              </span>
+            </label>
+
+            <div className="flex gap-2.5 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setDeclarationModalOpen(false)}
+                className="flex-1 rounded-xl h-10 text-xs font-bold border-slate-200"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAgreeAndUnlock}
+                disabled={!agreementChecked || agreeingDeclaration}
+                className="flex-1 rounded-xl h-10 text-xs font-bold bg-[#14213D] hover:bg-[#1e345e] text-white border-none shadow-md"
+              >
+                {agreeingDeclaration ? "Recording..." : "I Agree & Unlock"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

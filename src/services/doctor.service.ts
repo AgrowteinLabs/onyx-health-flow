@@ -129,4 +129,20 @@ export const getAgoraVideoToken = async (bookingId: string) => {
   return apiRequest(`/api/video/token/${bookingId}`, {
     method: "GET",
   });
+};
+
+export const getSharedReports = async (bookingId: string) => {
+  return apiRequest(`/api/booking/shared-reports/${bookingId}`, {
+    method: "GET",
+  });
+};
+
+export const agreeReportAccess = async (bookingId: string, declaration?: string) => {
+  return apiRequest(`/api/booking/agree-report-access/${bookingId}`, {
+    method: "POST",
+    data: {
+      agreed: true,
+      declaration: declaration || "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential.",
+    },
+  });
 };
