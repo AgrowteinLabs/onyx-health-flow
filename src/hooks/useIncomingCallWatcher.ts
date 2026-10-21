@@ -115,6 +115,92 @@ export function useIncomingCallWatcher() {
     }
   }, [location.pathname, activeCall, isMuted]);
 
+  // WebSocket presence connection for instant incoming call alerts
+  useEffect(() => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) return;
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectWebSocket = () => {
+      try {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || "https://dev-api.onyxhealthplus.com";
+        const wsProtocol = backendUrl.startsWith("https") ? "wss:" : "ws:";
+        const wsHost = backendUrl.replace(/^https?:\/\//, "");
+        const wsUrl = `${wsProtocol}//${wsHost}/ws/presence`;
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          // Identify as doctor upon connection
+          ws?.send(
+            JSON.stringify({
+              type: "identify",
+              role: "doctor",
+              userId,
+            })
+          );
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const eventType = data.type || data.event;
+
+            if (eventType === "consultation:incoming") {
+              const payload = data.payload || data;
+              const bookingId = payload.bookingId || data.bookingId;
+
+              if (bookingId && !dismissedCallsRef.current.has(bookingId)) {
+                const patientName = payload.patientName || data.patientName || "Incoming Patient";
+                const callData: IncomingCallData = {
+                  bookingId,
+                  patientName,
+                  reason: payload.reason || "Instant Telehealth Consultation",
+                  time: "Now",
+                  avatar: patientName.slice(0, 2).toUpperCase(),
+                };
+
+                setActiveCall(callData);
+                if (!isMuted) {
+                  startRingtone();
+                }
+                document.title = `(📞 INCOMING CALL) ${originalTitleRef.current}`;
+              }
+            } else if (eventType === "ticket:updated" || eventType === "payout:hold_updated") {
+              // Trigger a background refresh of dashboard data
+              window.dispatchEvent(new CustomEvent("onyx:refresh_dashboard"));
+            }
+          } catch (e) {
+            console.debug("WS incoming call parse error:", e);
+          }
+        };
+
+        ws.onerror = () => {
+          // Fallback to polling silently
+        };
+
+        ws.onclose = () => {
+          // Auto-reconnect after 5 seconds
+          reconnectTimeout = setTimeout(connectWebSocket, 5000);
+        };
+      } catch (err) {
+        console.debug("WS presence setup note:", err);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
+  }, [isMuted]);
+
   useEffect(() => {
     const origTitle = originalTitleRef.current;
     checkForIncomingCalls();
