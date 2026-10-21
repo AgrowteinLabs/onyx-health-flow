@@ -989,12 +989,16 @@ const DoctorDashboard = () => {
                           <Button
                             size="sm"
                             onClick={() =>
-                              navigate("/dashboard/doctor/consultations", {
-                                state: {
-                                  bookingId: apt.bookingId,
-                                  patient: apt.patient,
-                                },
-                              })
+                              navigate(
+                                `/dashboard/doctor/consultations?bookingId=${apt.bookingId}&autoJoin=true`,
+                                {
+                                  state: {
+                                    bookingId: apt.bookingId,
+                                    patient: apt.patient,
+                                    autoJoin: true,
+                                  },
+                                }
+                              )
                             }
                             className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white rounded-[12px] h-8 text-xs font-bold border-none shadow-sm hover:opacity-90 flex items-center gap-1"
                           >

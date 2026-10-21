@@ -49,7 +49,7 @@ export const IncomingCallModal = ({
   const handleAccept = () => {
     stopRingtone();
     onAccept(call);
-    navigate("/dashboard/doctor/consultations", {
+    navigate(`/dashboard/doctor/consultations?bookingId=${call.bookingId}&autoJoin=true`, {
       state: {
         bookingId: call.bookingId,
         patient: call.patientName,

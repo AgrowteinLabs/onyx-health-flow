@@ -11,7 +11,8 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: "::",
-      port: 8080,
+      port: 8081,
+      strictPort: false,
       proxy: {
         '^/(api|create|get|view|update|delete|list|add|validate|onboard|report|sessions|session-items)': {
           target: targetUrl,
