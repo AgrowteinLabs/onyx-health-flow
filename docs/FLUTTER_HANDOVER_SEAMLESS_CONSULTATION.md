@@ -17,7 +17,7 @@
   POST /api/auth/consultation-handshake
   (Flutter sends user JWT + reportId)
                 │
-                │ Backend returns { redirectUrl: "https://patient.onyxhealthplus.com/handover?ticket=tkt_..." }
+                │ Backend returns { redirectUrl: "https://myhealth.onyxhealthplus.com/handover?ticket=tkt_..." }
                 ▼
   Launch In-App Browser (Chrome Custom Tabs / Safari View Controller)
                 │
