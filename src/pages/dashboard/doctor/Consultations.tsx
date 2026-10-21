@@ -750,8 +750,24 @@ const Consultations = () => {
         setRemoteUserConnected(true);
         if (mediaType === "video") {
           setRemoteVideoTrackActive(true);
+          try {
+            const rawTrack = user.videoTrack?.getMediaStreamTrack();
+            if (rawTrack) {
+              const ms = new MediaStream([rawTrack]);
+              (remoteVideoElRef as any)._stream = ms;
+              if (remoteVideoElRef.current) {
+                remoteVideoElRef.current.srcObject = ms;
+                remoteVideoElRef.current.play().catch(() => {});
+              }
+            }
+          } catch (e) {
+            console.debug("Could not attach raw Agora MediaStreamTrack:", e);
+          }
           setTimeout(() => {
-            user.videoTrack?.play("remote-video");
+            try {
+              const container = document.getElementById("remote-video");
+              if (container) user.videoTrack?.play(container);
+            } catch { /* ignore */ }
           }, 300);
         }
         if (mediaType === "audio") {
@@ -771,18 +787,45 @@ const Consultations = () => {
         toast({ title: "Patient has left the call" });
       });
 
-      const rtcToken = token.startsWith("mock-") ? null : token;
+      const rtcToken = (token && !token.toLowerCase().includes("mock") && token.length > 30) ? token : null;
       const uid = Math.floor(Math.random() * 1000000);
       await client.join(appId, channelName, rtcToken, uid);
 
       try {
-        const localAudio = await AgoraRTC.createMicrophoneAudioTrack();
-        const localVideo = await AgoraRTC.createCameraVideoTrack();
+        let localAudio: any = null;
+        let localVideo: any = null;
+
+        if (localStreamRef.current) {
+          const vTrack = localStreamRef.current.getVideoTracks()[0];
+          const aTrack = localStreamRef.current.getAudioTracks()[0];
+          if (vTrack) {
+            try {
+              localVideo = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: vTrack });
+            } catch { /* fallback */ }
+          }
+          if (aTrack) {
+            try {
+              localAudio = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: aTrack });
+            } catch { /* fallback */ }
+          }
+        }
+
+        if (!localAudio) {
+          localAudio = await AgoraRTC.createMicrophoneAudioTrack();
+        }
+        if (!localVideo) {
+          localVideo = await AgoraRTC.createCameraVideoTrack();
+        }
         localAudioRef.current = localAudio;
         localVideoRef.current = localVideo;
 
         await client.publish([localAudio, localVideo]);
-        localVideo.play("local-video");
+        setTimeout(() => {
+          try {
+            const localCont = document.getElementById("local-video");
+            if (localCont) localVideo.play(localCont);
+          } catch { /* ignore */ }
+        }, 100);
 
         if (!micActive) {
           await localAudio.setEnabled(false);
@@ -830,7 +873,12 @@ const Consultations = () => {
 
       const token = res.token || "mock-token-xyz";
       const channelName = res.channelName || `room-${targetBookingId}`;
-      const appId = res.appId || import.meta.env.VITE_AGORA_APP_ID;
+      const envAppId = import.meta.env.VITE_AGORA_APP_ID;
+      const appId = (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
+        ? envAppId
+        : (res.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
+        ? res.appId
+        : "mock-app-id";
 
       setVideoToken(token);
       setInVideoCall(true);
@@ -874,7 +922,12 @@ const Consultations = () => {
 
       const token = res.token || "mock-token-xyz";
       const channelName = res.channelName || `room-${targetBookingId}`;
-      const appId = res.appId || import.meta.env.VITE_AGORA_APP_ID;
+      const envAppId = import.meta.env.VITE_AGORA_APP_ID;
+      const appId = (envAppId && !envAppId.startsWith("mock") && envAppId.length >= 10)
+        ? envAppId
+        : (res.appId && !res.appId.startsWith("mock") && res.appId.length >= 10)
+        ? res.appId
+        : "mock-app-id";
 
       setVideoToken(token);
       setInVideoCall(true);
