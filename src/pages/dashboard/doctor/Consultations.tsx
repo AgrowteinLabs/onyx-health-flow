@@ -388,7 +388,6 @@ const Consultations = () => {
     fetchConsultationsData();
 
     return () => {
-      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
       if (localAudioRef.current) localAudioRef.current.close();
       if (localVideoRef.current) localVideoRef.current.close();
       if (clientRef.current) clientRef.current.leave();

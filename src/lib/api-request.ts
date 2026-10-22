@@ -88,7 +88,7 @@ export const apiRequest = async <T = any>(
   endpoint: string,
   config: ApiRequestConfig = {}
 ): Promise<T> => {
-  const { requiresAuth = true, headers = {}, ...restConfig } = config;
+  const { requiresAuth = true, silent = false, headers = {}, ...restConfig } = config;
   const token = getAuthToken();
 
   const requestConfig: AxiosRequestConfig = {
@@ -134,13 +134,16 @@ export const apiRequest = async <T = any>(
       const status = error.response?.status;
       const message = error.response?.data?.message || error.message;
 
-      console.groupCollapsed(
+      const isSuppressed = silent && (status === 404 || status === 401 || status === 403);
+      if (!isSuppressed) {
+        console.groupCollapsed(
         `%c❌ [API ERROR] ${requestConfig.method?.toUpperCase()} ${endpoint}`,
         "color:red;font-weight:bold;"
       );
       console.log("Status:", status);
       console.log("Message:", message);
       console.groupEnd();
+      }
 
       /* 401 Handling → refresh token flow */
       if (status === 401 && requiresAuth) {
