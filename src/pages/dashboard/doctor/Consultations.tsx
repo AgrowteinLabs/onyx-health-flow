@@ -35,6 +35,8 @@ import {
   User,
   Pill,
   Printer,
+  Sliders,
+  Camera,
   CheckCircle2,
   Lock,
   Unlock,
@@ -58,6 +60,7 @@ import { listReports, listReportsByProfile } from "@/services/report.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
+import { DevicePermissionsModal } from "@/components/shared/DevicePermissionsModal";
 
 interface Patient {
   id: string | number;
@@ -156,6 +159,7 @@ const Consultations = () => {
   const [videoToken, setVideoToken] = useState("");
   const [micActive, setMicActive] = useState(true);
   const [cameraActive, setCameraActive] = useState(true);
+  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
 
   // Agora RTC states & refs (Option 1: 100% Pure Agora RTC)
   const clientRef = useRef<IAgoraRTCClient | null>(null);
@@ -702,6 +706,7 @@ const Consultations = () => {
         toast({ title: "Connected to telehealth call" });
       } catch (mediaErr) {
         console.warn("[Agora RTC] Media devices permission note:", mediaErr);
+        setPermissionModalOpen(true);
         toast({
           title: "Camera & Mic Notice",
           description: "Operating in receive-only mode or permissions not granted.",
@@ -1030,6 +1035,18 @@ const Consultations = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPermissionModalOpen(true)}
+            className="rounded-[14px] text-xs font-bold border-slate-200 text-slate-700 hover:text-blue-600 bg-white shadow-sm h-9 px-3 flex items-center gap-1.5"
+            title="Camera & Microphone Setup"
+          >
+            <Camera className="h-3.5 w-3.5 text-[#35B7C9]" />
+            <Mic className="h-3.5 w-3.5 text-emerald-500" />
+            <span>Camera & Mic Setup</span>
+          </Button>
+
           <Button
             variant="outline"
             size="icon"
@@ -2180,6 +2197,9 @@ const Consultations = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Camera & Microphone Permissions Setup Modal */}
+      <DevicePermissionsModal open={permissionModalOpen} onOpenChange={setPermissionModalOpen} />
     </div>
   );
 };
