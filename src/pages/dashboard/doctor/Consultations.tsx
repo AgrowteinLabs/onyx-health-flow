@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useLocation } from "react-router-dom";
 import PageHeader from "@/components/dashboard/PageHeader";
 import EmptyState from "@/components/dashboard/EmptyState";
@@ -67,7 +67,7 @@ interface Patient {
   conditionColor: string;
   lastVisit: string;
   nextAppointment: string;
-  status: "Stable" | "Monitor" | "Critical";
+  status: "Stable" | "Monitor" | "Critical" | "Completed";
   avatar: string;
   notes: string;
   vitals: { bp: string; temp: string; pulse: number | string };
@@ -81,7 +81,7 @@ const STATUS_STYLE: Record<string, { bg: string; text: string; border: string }>
   Critical: { bg: "bg-rose-50", text: "text-rose-600", border: "border-rose-100" },
 };
 
-const CallTimerBadge: React.FC<{ active: boolean; onTick?: (sec: number) => void }> = React.memo(({ active, onTick }) => {
+const CallTimerBadge = memo(({ active, onTick }: { active: boolean; onTick?: (sec: number) => void }) => {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -180,6 +180,9 @@ const Consultations = () => {
   // In-Call Live Notes & Post-Consultation Wrap-Up States
   const [inCallNotesOpen, setInCallNotesOpen] = useState(false);
   const [inCallClinicalNotes, setInCallClinicalNotes] = useState("");
+  const [inCallDrawerTab, setInCallDrawerTab] = useState<"notes" | "reports">("notes");
+  const [previewReportUrl, setPreviewReportUrl] = useState<string | null>(null);
+  const [previewReportTitle, setPreviewReportTitle] = useState<string>("");
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
   const [wrapUpRx, setWrapUpRx] = useState({
     medication: "",
@@ -1209,7 +1212,7 @@ const Consultations = () => {
         // Call backend to update booking status to completed
     const bId = selected?.bookingId || selected?.id;
     if (bId) {
-      completeBooking(bId).catch(() => {
+      completeBooking(String(bId)).catch(() => {
         apiRequest(`/api/booking/complete/${bId}`, { method: "POST", data: { bookingId: bId } }).catch(() => null);
       });
 
