@@ -160,6 +160,32 @@ const DoctorDashboard = () => {
     thisMonthEarnings: "₹0",
   });
 
+  // Real-time Live Consultation Alert (triggers high-priority banner when patient is waiting)
+  const liveWaitingConsultation = useMemo(() => {
+    if (activeCall) {
+      return {
+        patient: activeCall.patientName,
+        bookingId: activeCall.bookingId,
+        reason: activeCall.reason || "Live Incoming Call",
+        type: "Instant Telehealth",
+        time: activeCall.time || "Now",
+      };
+    }
+    const activeAppointment = appointments.find(
+      (a) => a.status === "In Progress" || a.status === "Urgent"
+    );
+    if (activeAppointment) {
+      return {
+        patient: activeAppointment.patient,
+        bookingId: activeAppointment.bookingId || activeAppointment.id,
+        reason: activeAppointment.reason,
+        type: activeAppointment.type,
+        time: activeAppointment.time,
+      };
+    }
+    return null;
+  }, [activeCall, appointments]);
+
   /* ============================================================
      FETCH DOCTOR DASHBOARD LIVE DATA
   ============================================================ */
