@@ -57,6 +57,7 @@ import { getProfiles, createProfile, viewProfile } from "@/services/profile.serv
 import { listReports, listReportsByProfile } from "@/services/report.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
+import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
 
 interface Patient {
   id: string | number;
@@ -965,9 +966,12 @@ const Consultations = () => {
         console.debug("Could not update local prescriptions cache", err);
       }
 
+      // Automatically open official printable PDF
+      openPrescriptionPdf(rxItem, true);
+
       toast({
-        title: "Prescription Issued & Consultation Completed",
-        description: `Electronic Rx recorded for ${rxItem.patient}. Consultation marked completed.`,
+        title: "Prescription Issued & PDF Opened",
+        description: `Electronic Rx PDF opened for ${rxItem.patient}. Consultation marked completed.`,
       });
       setWrapUpOpen(false);
     } catch {
@@ -1300,6 +1304,38 @@ const Consultations = () => {
                       className="flex-1 rounded-[14px] border-slate-200 font-bold hover:bg-slate-50"
                     >
                       <Video className="h-4 w-4 mr-1.5 text-[#35B7C9]" /> Start Call
+                    </Button>
+                  </div>
+
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        let targetRx = null;
+                        try {
+                          const saved = localStorage.getItem("onyx_doctor_prescriptions");
+                          if (saved) {
+                            const list = JSON.parse(saved);
+                            if (Array.isArray(list)) {
+                              targetRx = list.find(
+                                (p) =>
+                                  (selected.bookingId && p.bookingId === selected.bookingId) ||
+                                  (p.patient && p.patient.toLowerCase() === selected.name.toLowerCase())
+                              );
+                            }
+                          }
+                        } catch {}
+
+                        if (targetRx) {
+                          openPrescriptionPdf(targetRx, true);
+                        } else {
+                          setWrapUpOpen(true);
+                        }
+                      }}
+                      className="w-full rounded-[14px] border-slate-200 font-bold text-xs h-10 text-slate-700 hover:text-blue-600 hover:bg-blue-50/50 flex items-center justify-center gap-2"
+                    >
+                      <Printer className="h-4 w-4 text-[#35B7C9]" />
+                      Open / Issue Prescription PDF
                     </Button>
                   </div>
                 </>
@@ -2026,7 +2062,7 @@ const Consultations = () => {
               </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex gap-2.5 pt-2">
               <Button
                 type="button"
                 variant="outline"
@@ -2036,11 +2072,55 @@ const Consultations = () => {
                 Close without Rx
               </Button>
               <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const previewRx = {
+                    id: `rx-${Date.now()}`,
+                    patient: selected?.name || "Patient",
+                    avatar: selected?.avatar || "PT",
+                    medications: wrapUpRx.medication
+                      ? [{
+                          name: wrapUpRx.medication,
+                          dosage: wrapUpRx.dosage,
+                          frequency: wrapUpRx.frequency,
+                          duration: wrapUpRx.duration,
+                          instructions: wrapUpRx.instructions,
+                        }]
+                      : [{
+                          name: "Paracetamol",
+                          dosage: "500mg",
+                          frequency: "Twice daily",
+                          duration: wrapUpRx.duration || "5 days",
+                          instructions: "After meals",
+                        }],
+                    duration: wrapUpRx.duration,
+                    issuedDate: new Date().toLocaleDateString("en-IN", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    }),
+                    refillStatus: "none" as const,
+                    notes: `${diagnosis ? `Diagnosis: ${diagnosis}. ` : ""}${
+                      wrapUpRx.instructions || inCallClinicalNotes || "Complete full course as prescribed."
+                    }`,
+                    bookingId: selected?.bookingId,
+                    doctorName: localStorage.getItem("userName") || "Attending Physician",
+                  };
+                  openPrescriptionPdf(previewRx, false);
+                }}
+                className="h-10 px-3 rounded-[14px] text-xs font-bold border-slate-300 text-slate-700 hover:bg-slate-50 flex items-center gap-1.5"
+              >
+                <Printer className="h-3.5 w-3.5 text-slate-600" />
+                Preview PDF
+              </Button>
+              <Button
                 type="submit"
                 disabled={wrapUpSubmitting}
-                className="flex-1 h-10 rounded-[14px] text-xs font-bold bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white border-none shadow-md shadow-[#F2052C]/20"
+                className="flex-1 h-10 rounded-[14px] text-xs font-bold bg-gradient-to-r from-[#F2052C] to-[#FF4B66] text-white border-none shadow-md shadow-[#F2052C]/20 flex items-center justify-center gap-1.5"
               >
-                {wrapUpSubmitting ? "Issuing..." : "Issue Digital Prescription & Complete"}
+                <FileText className="h-3.5 w-3.5" />
+                {wrapUpSubmitting ? "Issuing..." : "Issue & Open PDF"}
               </Button>
             </div>
           </form>

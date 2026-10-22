@@ -37,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { listBookings } from "@/services/booking.service";
 import { createPrescription, getPrescription } from "@/services/doctor.service";
 import { viewUser } from "@/services/user.service";
+import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
 
 interface Prescription {
   id: string | number;
