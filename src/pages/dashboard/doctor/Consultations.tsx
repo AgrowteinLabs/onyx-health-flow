@@ -887,9 +887,9 @@ const Consultations = () => {
     setInVideoCall(false);
     setRemoteUserConnected(false);
     setRemoteVideoTrackActive(false);
-    setHasWebRtcStream(false);
+    setIsRealCall(false);
 
-        // Call backend to update booking status to completed
+    // Call backend to update booking status to completed
     const bId = selected?.bookingId || selected?.id;
     if (bId) {
       completeBooking(String(bId)).catch(() => {
@@ -903,36 +903,22 @@ const Consultations = () => {
         )
       );
 
-      // Notify Patient peer via PeerJS data connection
+      // Notify Patient via BroadcastChannel if available
       try {
-        const cleanRoomId = String(bId).replace(/[^a-zA-Z0-9_-]/g, "");
-        const conn = peerJSRef.current?.connect(`onyx-pat-${cleanRoomId}`);
-        if (conn) {
-          conn.on("open", () => {
-            conn.send({
-              type: "consultation-completed",
-              action: "consultation-completed",
-              bookingId: bId,
-            });
-            setTimeout(() => {
-              try { conn.close(); } catch { /* ignore */ }
-            }, 600);
-          });
-        }
-      } catch (e) {
-        console.debug("PeerJS notify completion note:", e);
-      }
-
-      // Notify Patient via BroadcastChannel
-      if (broadcastChannelRef.current) {
-        try {
-          broadcastChannelRef.current.postMessage({
+        if (typeof BroadcastChannel !== "undefined") {
+          const bc = new BroadcastChannel("onyx-telehealth-session");
+          bc.postMessage({
             type: "call-ended",
             action: "consultation-completed",
             bookingId: bId,
             sender: "doctor",
           });
-        } catch { /* ignore */ }
+          setTimeout(() => {
+            try { bc.close(); } catch { /* ignore */ }
+          }, 800);
+        }
+      } catch (e) {
+        console.debug("Broadcast notification note:", e);
       }
     }
 
@@ -1579,20 +1565,9 @@ const Consultations = () => {
               <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
                 {/* Dedicated Agora container */}
                 <div
-                  id="remote-video-agora"
+                  id="remote-video-container"
                   className={`absolute inset-0 w-full h-full object-cover z-0 ${
-                    !hasWebRtcStream && remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
-                  }`}
-                />
-
-                {/* Dedicated WebRTC / PeerJS video element */}
-                <video
-                  ref={remoteVideoElRef}
-                  id="remote-video-webrtc"
-                  autoPlay
-                  playsInline
-                  className={`absolute inset-0 w-full h-full object-cover z-0 ${
-                    hasWebRtcStream && remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
+                    remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
                   }`}
                 />
 
@@ -1613,11 +1588,8 @@ const Consultations = () => {
               {/* Self Video (PiP) */}
               <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[16px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
                 <div id="local-video" className="w-full h-full object-cover relative">
-                  <video
-                    ref={localVideoElRef}
-                    autoPlay
-                    muted
-                    playsInline
+                  <div
+                    id="local-video-container"
                     className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
                   />
                   {!cameraActive && (
