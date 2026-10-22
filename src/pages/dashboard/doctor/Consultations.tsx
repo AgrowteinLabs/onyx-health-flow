@@ -81,6 +81,34 @@ const STATUS_STYLE: Record<string, { bg: string; text: string; border: string }>
   Critical: { bg: "bg-rose-50", text: "text-rose-600", border: "border-rose-100" },
 };
 
+const CallTimerBadge: React.FC<{ active: boolean; onTick?: (sec: number) => void }> = React.memo(({ active, onTick }) => {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      setElapsed(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setElapsed((prev) => {
+        const next = prev + 1;
+        onTick?.(next);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [active, onTick]);
+
+  const mins = Math.floor(elapsed / 60).toString().padStart(2, "0");
+  const secs = (elapsed % 60).toString().padStart(2, "0");
+
+  return (
+    <span className="text-xs font-mono font-bold tracking-wider">
+      {mins}:{secs}
+    </span>
+  );
+});
+
 const Consultations = () => {
   const location = useLocation();
   const autoJoinHandledRef = useRef(false);
@@ -147,6 +175,7 @@ const Consultations = () => {
   const [isRealCall, setIsRealCall] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const durationTimerRef = useRef<any>(null);
+  const callDurationRef = useRef(0);
 
   // In-Call Live Notes & Post-Consultation Wrap-Up States
   const [inCallNotesOpen, setInCallNotesOpen] = useState(false);
@@ -835,10 +864,7 @@ const Consultations = () => {
     setRemoteVideoTrackActive(true);
     toast({ title: "Connected to secure telehealth server (Simulated)" });
 
-    setCallDuration(0);
-    durationTimerRef.current = setInterval(() => {
-      setCallDuration((prev) => prev + 1);
-    }, 1000);
+    callDurationRef.current = 0;
   };
 
   const startAgoraCall = async (appId: string, channelName: string, token: string, userUid?: number | string | null) => {
@@ -855,25 +881,16 @@ const Consultations = () => {
         setRemoteUserConnected(true);
         if (mediaType === "video") {
           setRemoteVideoTrackActive(true);
-          try {
-            const rawTrack = user.videoTrack?.getMediaStreamTrack();
-            if (rawTrack) {
-              const ms = new MediaStream([rawTrack]);
-              (remoteVideoElRef as any)._stream = ms;
-              if (remoteVideoElRef.current && remoteVideoElRef.current.srcObject !== ms) {
-                remoteVideoElRef.current.srcObject = ms;
-                remoteVideoElRef.current.play().catch(() => {});
-              }
-            }
-          } catch (e) {
-            console.debug("Could not attach raw Agora MediaStreamTrack:", e);
-          }
           setTimeout(() => {
             try {
-              const container = document.getElementById("remote-video");
-              if (container) user.videoTrack?.play(container);
-            } catch { /* ignore */ }
-          }, 300);
+              const container = document.getElementById("remote-video-agora");
+              if (container) {
+                user.videoTrack?.play(container);
+              }
+            } catch (e) {
+              console.warn("Agora remote video play note:", e);
+            }
+          }, 100);
         }
         if (mediaType === "audio") {
           user.audioTrack?.play();
@@ -961,10 +978,7 @@ const Consultations = () => {
         });
       }
 
-      setCallDuration(0);
-      durationTimerRef.current = setInterval(() => {
-        setCallDuration((prev) => prev + 1);
-      }, 1000);
+      callDurationRef.current = 0;
     } catch (err: any) {
       console.warn("Agora connection failed:", err);
       startSimulatedCall();
@@ -1886,30 +1900,32 @@ const Consultations = () => {
       {/* Video Call Dialog Overlay */}
       <Dialog open={inVideoCall} onOpenChange={(open) => { if (!open) handleEndCall(); }}>
         <DialogContent className="max-w-5xl h-[650px] p-0 bg-slate-900 border border-slate-800 rounded-[28px] overflow-hidden flex flex-col justify-between text-white shadow-2xl">
-          {/* Main Area: Video Stream + In-Call Notes Drawer */}
+                    {/* Main Area: Video Stream + In-Call Notes Drawer */}
           <div className="relative flex-1 bg-slate-950 flex overflow-hidden">
             {/* Main Video Viewport */}
             <div className="relative flex-1 h-full transition-all duration-300 flex items-center justify-center">
               <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
-                <video
-                  ref={(el) => {
-                    if (el) {
-                      remoteVideoElRef.current = el;
-                      const st = (remoteVideoElRef as any)._stream;
-                      if (st && el.srcObject !== st) {
-                        el.srcObject = st;
-                        el.play().catch(() => {});
-                      }
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  className={`w-full h-full object-cover transition-opacity duration-300 ${
-                    remoteVideoTrackActive && remoteUserConnected ? "opacity-100 block" : "opacity-0 hidden"
+                {/* Dedicated Agora container */}
+                <div
+                  id="remote-video-agora"
+                  className={`absolute inset-0 w-full h-full object-cover z-0 ${
+                    remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
                   }`}
                 />
-                {!remoteVideoTrackActive && (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-400">
+
+                {/* Dedicated WebRTC / PeerJS video element */}
+                <video
+                  ref={remoteVideoElRef}
+                  id="remote-video-webrtc"
+                  autoPlay
+                  playsInline
+                  className={`absolute inset-0 w-full h-full object-cover z-0 ${
+                    remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
+                  }`}
+                />
+
+                {(!remoteVideoTrackActive || !remoteUserConnected) && (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400 z-10 relative">
                     <div className="h-20 w-20 rounded-full bg-slate-800 flex items-center justify-center mb-3">
                       <User className="h-10 w-10 text-slate-500" />
                     </div>
@@ -1926,15 +1942,7 @@ const Consultations = () => {
               <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[16px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
                 <div id="local-video" className="w-full h-full object-cover relative">
                   <video
-                    ref={(el) => {
-                      if (el) {
-                        localVideoElRef.current = el;
-                        if (localStreamRef.current && el.srcObject !== localStreamRef.current) {
-                          el.srcObject = localStreamRef.current;
-                          el.play().catch(() => {});
-                        }
-                      }
-                    }}
+                    ref={localVideoElRef}
                     autoPlay
                     muted
                     playsInline
@@ -1954,10 +1962,8 @@ const Consultations = () => {
 
               {/* Top Bar inside Video */}
               <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 backdrop-blur-md px-3.5 py-1.5 rounded-full z-20 border border-white/10">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-xs font-mono font-bold tracking-wider">
-                  {formatTime(callDuration)}
-                </span>
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <CallTimerBadge active={inVideoCall} onTick={(s) => { callDurationRef.current = s; }} />
                 <span className="text-white/40">|</span>
                 <span className="text-xs font-bold text-slate-200">{selected?.name}</span>
                 {selected?.vitals?.bp && (
@@ -2275,7 +2281,7 @@ const Consultations = () => {
                     Consultation Completed
                   </DialogTitle>
                   <p className="text-xs text-slate-500">
-                    Patient: <strong className="text-slate-800">{selected?.name}</strong> • Duration: {formatTime(callDuration)}
+                    Patient: <strong className="text-slate-800">{selected?.name}</strong> • Duration: {formatTime(callDurationRef.current)}
                   </p>
                 </div>
               </div>
