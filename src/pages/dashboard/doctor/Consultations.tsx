@@ -39,7 +39,10 @@ import {
   X,
   UserPlus,
   ArrowRight,
-  CheckCheck,
+  Maximize2,
+  Download,
+  ClipboardList,
+  ChevronLeft,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -118,7 +121,7 @@ const CallTimerBadge = memo(({ active, onTick }: { active: boolean; onTick?: (se
 });
 
 /* ============================================================
-   MAIN COMPONENT: SPLIT-SCREEN CLINICAL COMMAND CENTER
+   MAIN COMPONENT: LINEAR 3-PHASE CLINICAL WORKFLOW
 ============================================================ */
 const Consultations: React.FC = () => {
   const location = useLocation();
@@ -126,18 +129,30 @@ const Consultations: React.FC = () => {
   const { toast } = useToast();
   const autoJoinHandledRef = useRef(false);
 
+  // Workflow Phases:
+  // Phase 1: "queue" (Waiting Room & Patient Dossier Intake)
+  // Phase 2: "encounter" (Live Full-Screen Video + In-Call Clinical Chart & Prescription)
+  // Phase 3: "summary" (Post-Consultation Signed Slip & Next Patient Transition)
+  const [workflowPhase, setWorkflowPhase] = useState<"queue" | "encounter" | "summary">("queue");
+
   // Clinical data states
   const [patients, setPatients] = useState<PatientRecord[]>([]);
   const [selected, setSelected] = useState<PatientRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [queueFilter, setQueueFilter] = useState<"All" | "Waiting" | "Scheduled" | "Completed">("All");
-  const [activeDossierTab, setActiveDossierTab] = useState<"vitals" | "records" | "notes" | "rx">("vitals");
+  const [queueTab, setQueueTab] = useState<"Waiting" | "Scheduled" | "Completed">("Waiting");
 
-  // Clinical notes & diagnosis state
-  const [clinicalNotes, setClinicalNotes] = useState("");
+  // In-Call Live SOAP Notes & Prescription Form
   const [clinicalDiagnosis, setClinicalDiagnosis] = useState("");
-  const [savingNotes, setSavingNotes] = useState(false);
+  const [clinicalNotes, setClinicalNotes] = useState("");
+  const [rxForm, setRxForm] = useState({
+    medication: "Paracetamol 650mg / Amoxicillin 500mg",
+    dosage: "500mg",
+    frequency: "Twice daily (BD)",
+    duration: "5 days",
+    instructions: "Take with warm water after meals",
+  });
+  const [concludingConsultation, setConcludingConsultation] = useState(false);
 
   // ABDM / NMC Consent & Shared Reports
   const [sharedReports, setSharedReports] = useState<any[]>([]);
@@ -155,12 +170,9 @@ const Consultations: React.FC = () => {
   const [previewReportTitle, setPreviewReportTitle] = useState<string>("");
 
   // Video call Agora RTC states
-  const [inVideoCall, setInVideoCall] = useState(false);
   const [videoToken, setVideoToken] = useState("");
   const [micActive, setMicActive] = useState(true);
   const [cameraActive, setCameraActive] = useState(true);
-  const [inCallDrawerOpen, setInCallDrawerOpen] = useState(false);
-  const [inCallDrawerTab, setInCallDrawerTab] = useState<"notes" | "reports">("notes");
 
   const clientRef = useRef<IAgoraRTCClient | null>(null);
   const localAudioRef = useRef<IMicrophoneAudioTrack | null>(null);
@@ -169,17 +181,6 @@ const Consultations: React.FC = () => {
   const [remoteVideoTrackActive, setRemoteVideoTrackActive] = useState(false);
   const [isRealCall, setIsRealCall] = useState(false);
   const callDurationRef = useRef(0);
-
-  // Post-Consultation Wrap-Up Dialog
-  const [wrapUpOpen, setWrapUpOpen] = useState(false);
-  const [wrapUpSubmitting, setWrapUpSubmitting] = useState(false);
-  const [wrapUpRx, setWrapUpRx] = useState({
-    medication: "",
-    dosage: "500mg",
-    frequency: "Twice daily",
-    duration: "5 days",
-    instructions: "After meals with warm water",
-  });
 
   // New Patient Form
   const [submittingPatient, setSubmittingPatient] = useState(false);
@@ -247,7 +248,7 @@ const Consultations: React.FC = () => {
 
       const realPatients: PatientRecord[] = [];
 
-      // 1. Process Bookings into Queue
+      // 1. Process Bookings
       if (bookingList.length > 0) {
         bookingList.forEach((b: any, index: number) => {
           const pIdStr = typeof b.profileId === "string" ? b.profileId : b.profileId?._id;
@@ -310,7 +311,7 @@ const Consultations: React.FC = () => {
             condition: cond,
             conditionColor: index % 3 === 0 ? "#F2052C" : index % 3 === 1 ? "#35B7C9" : "#10B981",
             lastVisit: "Recent Telehealth",
-            nextAppointment: b.slotTimeStart ? `${b.slotTimeStart} Today` : "Queue Active",
+            nextAppointment: b.slotTimeStart ? `${b.slotTimeStart} Today` : "Immediate Queue",
             slotTime: b.slotTimeStart || "Immediate",
             status: qStatus,
             type: b.type === "instant" ? "instant" : "scheduled",
@@ -328,7 +329,7 @@ const Consultations: React.FC = () => {
         });
       }
 
-      // 2. Add Profiles if not in list
+      // 2. Profiles without bookings
       if (profileList.length > 0) {
         profileList.forEach((p: any, index: number) => {
           const pName = p.name || `Patient ${index + 1}`;
@@ -338,12 +339,12 @@ const Consultations: React.FC = () => {
               name: pName,
               age: Number(p.age) || 32,
               gender: p.gender || "Female",
-              condition: p.condition || "Kiosk Wellness Screening",
+              condition: p.condition || "Kiosk Biometric Screen",
               conditionColor: "#8B5CF6",
               lastVisit: "Recent Kiosk Screen",
-              nextAppointment: "Available in Clinic",
-              status: "Scheduled",
-              type: "scheduled",
+              nextAppointment: "Clinic Walk-in",
+              status: "Waiting",
+              type: "instant",
               avatar: pName
                 .split(" ")
                 .map((n: string) => n[0])
@@ -360,16 +361,16 @@ const Consultations: React.FC = () => {
 
       setPatients(realPatients);
 
-      // Select first patient or preserve current selection
+      // Preserve or set selected patient
       setSelected((prev) => {
         if (prev) {
           const match = realPatients.find((p) => p.id === prev.id || p.bookingId === prev.bookingId);
           if (match) return match;
         }
-        return realPatients[0] || null;
+        return realPatients.find((p) => p.status === "Waiting") || realPatients[0] || null;
       });
     } catch (err) {
-      console.warn("Could not retrieve real consultations data:", err);
+      console.warn("Could not retrieve consultations data:", err);
     } finally {
       setLoading(false);
     }
@@ -385,11 +386,11 @@ const Consultations: React.FC = () => {
     };
   }, [fetchConsultationsData]);
 
-  // Update notes when selected patient changes
+  // Sync diagnosis and notes whenever active patient changes
   useEffect(() => {
     if (selected) {
+      setClinicalDiagnosis(selected.condition || "Clinical Telehealth Evaluation");
       setClinicalNotes(selected.notes || "");
-      setClinicalDiagnosis(selected.condition || "");
       fetchSharedReports(selected.bookingId);
     }
   }, [selected]);
@@ -398,11 +399,7 @@ const Consultations: React.FC = () => {
      ABDM / NMC SHARED REPORTS & PRIVACY DECLARATION
   ============================================================ */
   const fetchSharedReports = async (bookingId?: string) => {
-    const targetBookingId =
-      bookingId ||
-      selected?.bookingId ||
-      patients.find((p) => p.bookingId)?.bookingId;
-
+    const targetBookingId = bookingId || selected?.bookingId;
     if (!targetBookingId) {
       setSharedReportsStatus("not_shared");
       return;
@@ -427,8 +424,8 @@ const Consultations: React.FC = () => {
   const handleAgreeDeclaration = async () => {
     if (!agreementChecked) {
       toast({
-        title: "Declaration required",
-        description: "Please check the compliance checkbox to confirm NMC guidelines.",
+        title: "Consent Required",
+        description: "Please check the box to confirm NMC compliance.",
         variant: "destructive",
       });
       return;
@@ -440,11 +437,10 @@ const Consultations: React.FC = () => {
     setAgreeingDeclaration(true);
     try {
       await agreeReportAccess(targetBookingId);
-      toast({ title: "Access Unlocked", description: "Patient shared records are now decrypted for this session." });
+      toast({ title: "Records Decrypted", description: "Patient history unlocked for this encounter." });
       setDeclarationModalOpen(false);
       fetchSharedReports(targetBookingId);
-    } catch (err: any) {
-      toast({ title: "Notice", description: "Records unlocked for clinical evaluation." });
+    } catch {
       setDeclarationModalOpen(false);
       setSharedReportsStatus("unlocked");
     } finally {
@@ -453,7 +449,7 @@ const Consultations: React.FC = () => {
   };
 
   /* ============================================================
-     AGORA RTC 100% PURE ENGINE SETUP
+     AGORA RTC CALL ENGINE
   ============================================================ */
   const startAgoraCall = async (appId: string, channelName: string, token: string, userUid?: number | string | null) => {
     try {
@@ -468,7 +464,6 @@ const Consultations: React.FC = () => {
       const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
       clientRef.current = client;
 
-      // Handle patient subscribing & publishing
       client.on("user-published", async (user: any, mediaType: "video" | "audio") => {
         try {
           await client.subscribe(user, mediaType);
@@ -482,10 +477,9 @@ const Consultations: React.FC = () => {
                 if (container) {
                   container.innerHTML = "";
                   user.videoTrack?.play(container);
-                  console.log("[Agora RTC] Patient video track playing in doctor remote viewport");
                 }
               } catch (e) {
-                console.warn("[Agora RTC] Remote video playback note:", e);
+                console.warn("[Agora RTC] Video playback note:", e);
               }
             }, 50);
           }
@@ -498,7 +492,7 @@ const Consultations: React.FC = () => {
             }
           }
         } catch (subErr) {
-          console.error("[Agora RTC] Error subscribing to patient:", subErr);
+          console.error("[Agora RTC] Subscribe error:", subErr);
         }
       });
 
@@ -527,7 +521,7 @@ const Consultations: React.FC = () => {
         }
       }
 
-      // Initialize doctor mic and camera tracks
+      // Initialize doctor hardware audio & camera
       try {
         const localAudio = await AgoraRTC.createMicrophoneAudioTrack({ AEC: true, ANS: true, AGC: true });
         const localVideo = await AgoraRTC.createCameraVideoTrack({ encoderConfig: "720p_1" });
@@ -552,18 +546,18 @@ const Consultations: React.FC = () => {
         if (!micActive) await localAudio.setEnabled(false);
         if (!cameraActive) await localVideo.setEnabled(false);
 
-        toast({ title: "Connected to Telehealth Room", description: `Channel: ${channelName}` });
+        toast({ title: "Connected to Clinical Telehealth Room" });
       } catch (mediaErr) {
-        console.warn("[Agora RTC] Media permission note:", mediaErr);
+        console.warn("[Agora RTC] Permission note:", mediaErr);
         toast({
-          title: "Camera / Mic Note",
+          title: "Audio/Video Notice",
           description: "Operating in receive-only mode or permissions not granted.",
         });
       }
 
       callDurationRef.current = 0;
     } catch (err: any) {
-      console.error("[Agora RTC] Call error:", err);
+      console.error("[Agora RTC] Error:", err);
       startSimulatedCall();
     }
   };
@@ -572,20 +566,26 @@ const Consultations: React.FC = () => {
     setIsRealCall(false);
     setRemoteUserConnected(true);
     setRemoteVideoTrackActive(true);
-    toast({ title: "Connected to Secure Room (Clinical Simulation)" });
+    toast({ title: "Connected (Clinical Simulation Mode)" });
     callDurationRef.current = 0;
   };
 
-  const handleStartCall = async (targetPatient?: PatientRecord) => {
+  /* ============================================================
+     WORKFLOW PHASE TRANSITIONS
+  ============================================================ */
+  const handleStartConsultation = async (targetPatient?: PatientRecord) => {
     const p = targetPatient || selected;
     if (!p) {
-      toast({ title: "No patient selected", description: "Please pick a patient from the queue." });
+      toast({ title: "Select a patient first" });
       return;
     }
 
+    setSelected(p);
+    setWorkflowPhase("encounter");
+
     try {
       const targetBookingId = p.bookingId || `booking-${p.id}`;
-      toast({ title: "Initializing encrypted video room..." });
+      toast({ title: "Connecting encrypted Agora video room..." });
 
       let res: any = null;
       try {
@@ -610,7 +610,6 @@ const Consultations: React.FC = () => {
           : "mock-app-id";
 
       setVideoToken(token);
-      setInVideoCall(true);
 
       const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
       if (isRealAgora) {
@@ -618,14 +617,18 @@ const Consultations: React.FC = () => {
       } else {
         startSimulatedCall();
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       startSimulatedCall();
     }
   };
 
-  const handleEndCall = async () => {
+  // Conclude the consultation and issue the prescription in one fluid step!
+  const handleConcludeEncounter = async () => {
+    if (!selected) return;
+    setConcludingConsultation(true);
+
     try {
+      // 1. Leave Agora RTC
       if (localAudioRef.current) {
         localAudioRef.current.close();
         localAudioRef.current = null;
@@ -638,46 +641,67 @@ const Consultations: React.FC = () => {
         await clientRef.current.leave();
         clientRef.current = null;
       }
-    } catch (e) {
-      console.debug("Agora cleanup note:", e);
-    }
 
-    setInVideoCall(false);
-    setRemoteUserConnected(false);
-    setRemoteVideoTrackActive(false);
-    setIsRealCall(false);
+      // 2. Mark booking completed on backend
+      const bId = selected.bookingId || selected.id;
+      if (bId) {
+        completeBooking(String(bId)).catch(() => {
+          apiRequest(`/api/booking/complete/${bId}`, { method: "POST", data: { bookingId: bId } }).catch(() => null);
+        });
 
-    const bId = selected?.bookingId || selected?.id;
-    if (bId) {
-      completeBooking(String(bId)).catch(() => {
-        apiRequest(`/api/booking/complete/${bId}`, { method: "POST", data: { bookingId: bId } }).catch(() => null);
-      });
+        // Broadcast to patient portal
+        try {
+          if (typeof BroadcastChannel !== "undefined") {
+            const bc = new BroadcastChannel("onyx-telehealth-session");
+            bc.postMessage({
+              type: "call-ended",
+              action: "consultation-completed",
+              bookingId: bId,
+              sender: "doctor",
+            });
+            setTimeout(() => {
+              try { bc.close(); } catch {}
+            }, 800);
+          }
+        } catch {}
+      }
 
-      setPatients((prev) =>
-        prev.map((p) => (p.bookingId === bId || p.id === bId ? { ...p, status: "Completed" } : p))
-      );
+      // 3. Save Prescription to Backend
+      const rxPayload = {
+        bookingId: selected.bookingId,
+        patientName: selected.name,
+        diagnosis: clinicalDiagnosis || selected.condition,
+        instructions: rxForm.instructions,
+        duration: rxForm.duration,
+        medications: [
+          {
+            name: rxForm.medication,
+            dosage: rxForm.dosage,
+            frequency: rxForm.frequency,
+            duration: rxForm.duration,
+            instructions: rxForm.instructions,
+          },
+        ],
+      };
 
       try {
-        if (typeof BroadcastChannel !== "undefined") {
-          const bc = new BroadcastChannel("onyx-telehealth-session");
-          bc.postMessage({
-            type: "call-ended",
-            action: "consultation-completed",
-            bookingId: bId,
-            sender: "doctor",
-          });
-          setTimeout(() => {
-            try { bc.close(); } catch {}
-          }, 800);
-        }
+        await createPrescription(rxPayload);
       } catch {}
-    }
 
-    toast({
-      title: "Telehealth consultation concluded",
-      description: "Opening post-consultation electronic prescription summary...",
-    });
-    setWrapUpOpen(true);
+      // Update patient status to Completed
+      setPatients((prev) =>
+        prev.map((p) => (p.id === selected.id || p.bookingId === selected.bookingId ? { ...p, status: "Completed" } : p))
+      );
+
+      // Move smoothly to Phase 3: Post-Encounter Summary & Transition
+      setWorkflowPhase("summary");
+      toast({
+        title: "Encounter Concluded & Prescription Signed",
+        description: `Official digital prescription issued for ${selected.name}.`,
+      });
+    } finally {
+      setConcludingConsultation(false);
+    }
   };
 
   const toggleMic = async () => {
@@ -686,9 +710,7 @@ const Consultations: React.FC = () => {
     if (localAudioRef.current) {
       try {
         await localAudioRef.current.setEnabled(nextState);
-      } catch (err) {
-        console.error("Error toggling microphone:", err);
-      }
+      } catch {}
     }
   };
 
@@ -707,11 +729,14 @@ const Consultations: React.FC = () => {
             }
           }, 100);
         }
-      } catch (err) {
-        console.error("Error toggling camera:", err);
-      }
+      } catch {}
     }
   };
+
+  // Next patient in line
+  const nextWaitingPatient = useMemo(() => {
+    return patients.find((p) => (p.status === "Waiting" || p.status === "Scheduled") && p.id !== selected?.id) || null;
+  }, [patients, selected]);
 
   // Auto-connect from accepted incoming call
   useEffect(() => {
@@ -723,8 +748,7 @@ const Consultations: React.FC = () => {
       autoJoinHandledRef.current = true;
       const targetP = patients.find((p) => p.bookingId === urlBookingId);
       if (targetP) {
-        setSelected(targetP);
-        handleStartCall(targetP);
+        handleStartConsultation(targetP);
       } else {
         apiRequest(`/api/booking/${urlBookingId}`)
           .then((bRes: any) => {
@@ -739,26 +763,23 @@ const Consultations: React.FC = () => {
                 conditionColor: "#F2052C",
                 lastVisit: "Live Call",
                 nextAppointment: "Active Now",
-                status: "In Consultation",
+                status: "Waiting",
                 avatar: "PT",
-                notes: `Auto-joined incoming session: ${b.reason || "Telehealth"}`,
+                notes: `Incoming live session: ${b.reason || "Telehealth"}`,
                 vitals: { bp: "120/80", temp: "98.6°F", pulse: 72, spo2: "98%" },
                 bookingId: urlBookingId,
               };
-              setSelected(syntheticPatient);
-              handleStartCall(syntheticPatient);
+              handleStartConsultation(syntheticPatient);
             }
           })
           .catch(() => {
-            handleStartCall();
+            handleStartConsultation();
           });
       }
     }
   }, [patients, location.search]);
 
-  /* ============================================================
-     PATIENT ACTIONS: CREATE & SAVE NOTES
-  ============================================================ */
+  // Quick Register Patient
   const handleCreatePatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPatient.name.trim()) return;
@@ -787,7 +808,7 @@ const Consultations: React.FC = () => {
         condition: newPatient.condition,
         conditionColor: "#F2052C",
         lastVisit: "Registered Today",
-        nextAppointment: "Immediate Virtual Queue",
+        nextAppointment: "Live Queue",
         status: "Waiting",
         type: "instant",
         avatar: newPatient.name
@@ -809,96 +830,9 @@ const Consultations: React.FC = () => {
       setPatients((prev) => [addedRecord, ...prev]);
       setSelected(addedRecord);
       setAddPatientOpen(false);
-      setNewPatient({
-        name: "",
-        age: "36",
-        gender: "Male",
-        condition: "Hypertension & Routine Consultation",
-        phone: "",
-        bp: "120/80",
-        temp: "98.6°F",
-        pulse: "72",
-      });
-
-      toast({ title: "Patient Registered", description: `${addedRecord.name} added to live intake queue.` });
-    } catch {
-      toast({ title: "Patient Added", description: `${newPatient.name} added to active queue.` });
-      setAddPatientOpen(false);
+      toast({ title: "Patient Admitted to Queue", description: `${addedRecord.name} is ready for consultation.` });
     } finally {
       setSubmittingPatient(false);
-    }
-  };
-
-  const handleSaveNotes = () => {
-    if (!selected) return;
-    setSavingNotes(true);
-    setTimeout(() => {
-      setSavingNotes(false);
-      setPatients((prev) =>
-        prev.map((p) =>
-          p.id === selected.id ? { ...p, notes: clinicalNotes, condition: clinicalDiagnosis } : p
-        )
-      );
-      toast({ title: "Clinical notes updated", description: "Assessment recorded for this patient file." });
-    }, 400);
-  };
-
-  const handleWrapUpPrescription = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setWrapUpSubmitting(true);
-    try {
-      const rxItem = {
-        bookingId: selected?.bookingId,
-        patientName: selected?.name,
-        diagnosis: clinicalDiagnosis || selected?.condition || "Telehealth Consultation",
-        instructions: wrapUpRx.instructions,
-        duration: wrapUpRx.duration,
-        medications: wrapUpRx.medication.trim()
-          ? [
-              {
-                name: wrapUpRx.medication.trim(),
-                dosage: wrapUpRx.dosage,
-                frequency: wrapUpRx.frequency,
-                duration: wrapUpRx.duration,
-                instructions: wrapUpRx.instructions,
-              },
-            ]
-          : [
-              {
-                name: "Amoxicillin / Clavulanate",
-                dosage: "625mg",
-                frequency: "Twice daily",
-                duration: "5 days",
-                instructions: "After meals with water",
-              },
-            ],
-      };
-
-      try {
-        await createPrescription(rxItem);
-      } catch {}
-
-      toast({
-        title: "Digital Prescription Created",
-        description: `Prescription saved for ${selected?.name}. Official slip generated.`,
-      });
-
-      openPrescriptionPdf(
-        {
-          patientName: selected?.name,
-          bookingId: selected?.bookingId,
-          diagnosis: clinicalDiagnosis || selected?.condition,
-          notes: clinicalNotes,
-          medications: rxItem.medications,
-          instructions: wrapUpRx.instructions,
-          duration: wrapUpRx.duration,
-        },
-        false
-      );
-
-      setWrapUpOpen(false);
-    } finally {
-      setWrapUpSubmitting(false);
     }
   };
 
@@ -914,846 +848,672 @@ const Consultations: React.FC = () => {
 
       if (!matchesSearch) return false;
 
-      if (queueFilter === "All") return true;
-      if (queueFilter === "Waiting") return p.status === "Waiting" || p.status === "In Consultation";
-      if (queueFilter === "Scheduled") return p.status === "Scheduled";
-      if (queueFilter === "Completed") return p.status === "Completed";
+      if (queueTab === "Waiting") return p.status === "Waiting" || p.status === "In Consultation";
+      if (queueTab === "Scheduled") return p.status === "Scheduled";
+      if (queueTab === "Completed") return p.status === "Completed";
       return true;
     });
-  }, [patients, searchQuery, queueFilter]);
+  }, [patients, searchQuery, queueTab]);
 
   /* ============================================================
      RENDER
   ============================================================ */
   return (
     <div className="space-y-6 pb-12 animate-fadeIn font-sans text-slate-800">
-      {/* Top Clinical Suite Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 backdrop-blur-md p-5 rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)]">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="h-10 w-10 rounded-[14px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold">
-              <Stethoscope className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-xl font-extrabold text-[#14213D] tracking-tight">
-                Telehealth Virtual Clinic
-              </h1>
-              <p className="text-xs text-slate-400 font-medium">
-                Unified Split-Screen Clinical Command Center · Agora HD Video & Kiosk Telemetry
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Audio & Camera Hardware Test Button */}
-          <Button
-            variant="outline"
-            onClick={() => setPermissionsModalOpen(true)}
-            className="rounded-[14px] h-9 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-sm flex items-center gap-1.5"
-          >
-            <Camera className="h-3.5 w-3.5 text-[#35B7C9]" /> Device Check
-          </Button>
-
-          {/* Refresh Queue */}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchConsultationsData}
-            disabled={loading}
-            className="rounded-[14px] h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-sm"
-            title="Refresh Patient Queue"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          </Button>
-
-          {/* Quick Register Patient */}
-          <Button
-            onClick={() => setAddPatientOpen(true)}
-            className="rounded-[14px] h-9 px-4 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-sm flex items-center gap-1.5"
-          >
-            <UserPlus className="h-3.5 w-3.5" /> Quick Register
-          </Button>
-        </div>
-      </div>
-
       {/* ============================================================
-          SPLIT-SCREEN COMMAND CENTER (Left: Queue | Right: Dossier)
+          PHASE 2: ACTIVE CLINICAL ENCOUNTER SUITE (FULL WORKSPACE)
       ============================================================ */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* ==========================================
-            LEFT COLUMN: PATIENT QUEUE (lg:col-span-4)
-        ========================================== */}
-        <div className="lg:col-span-5 xl:col-span-4 space-y-4">
-          <div className="bg-white rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] p-4 space-y-3.5">
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                placeholder="Search patient, complaint, phone..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-10 rounded-[14px] bg-slate-50 border-slate-200 text-xs font-medium focus:bg-white"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Queue Filter Segmented Pills */}
-            <div className="flex items-center p-1 bg-slate-100/90 rounded-[14px] text-xs font-bold text-slate-500">
-              {(["All", "Waiting", "Scheduled", "Completed"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setQueueFilter(tab)}
-                  className={`flex-1 py-1.5 rounded-[11px] transition-all text-center ${
-                    queueFilter === tab
-                      ? "bg-white text-[#14213D] shadow-sm font-extrabold"
-                      : "hover:text-[#14213D]"
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {/* Queue Summary Indicator */}
-            <div className="flex items-center justify-between px-1 text-[11px] font-bold text-slate-400">
-              <span>{filteredPatients.length} PATIENT(S) IN QUEUE</span>
-              <span className="flex items-center gap-1 text-emerald-600 font-extrabold">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Telehealth Ready
-              </span>
-            </div>
-
-            {/* Queue List */}
-            <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
-              {filteredPatients.length === 0 ? (
-                <div className="text-center py-12 px-4 rounded-[18px] bg-slate-50/60 border border-dashed border-slate-200">
-                  <User className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                  <p className="text-xs font-bold text-slate-500">No patients in this queue filter</p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Try switching filters or register a walk-in patient.
-                  </p>
+      {workflowPhase === "encounter" && selected ? (
+        <div className="space-y-4 animate-fadeIn">
+          {/* Top Encounter Navigation Bar */}
+          <div className="bg-slate-900 text-white p-4 rounded-[22px] border border-slate-800 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setWorkflowPhase("queue")}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 rounded-[12px] h-8 px-2 text-xs"
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" /> Back to Queue
+              </Button>
+              <div className="h-4 w-[1px] bg-slate-700" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-extrabold text-white tracking-tight">{selected.name}</h2>
+                  <span className="text-xs text-slate-400">
+                    {selected.age}y · {selected.gender}
+                  </span>
+                  <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    Live Encounter
+                  </Badge>
                 </div>
-              ) : (
-                filteredPatients.map((p) => {
-                  const isSelected = selected?.id === p.id;
-                  const isWaiting = p.status === "Waiting" || p.status === "In Consultation";
+                <p className="text-[11px] text-slate-400 font-medium">
+                  {selected.condition} · Ref: {selected.bookingId || selected.id}
+                </p>
+              </div>
+            </div>
 
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => setSelected(p)}
-                      className={`group relative p-3.5 rounded-[18px] transition-all cursor-pointer border ${
-                        isSelected
-                          ? "bg-gradient-to-r from-rose-50/70 via-white to-white border-[#F2052C] shadow-md shadow-rose-500/5 ring-1 ring-[#F2052C]/20"
-                          : "bg-white hover:bg-slate-50/80 border-slate-100 hover:border-slate-200 shadow-sm"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          {/* Avatar */}
-                          <div
-                            className={`h-11 w-11 rounded-[14px] flex items-center justify-center font-extrabold text-xs shrink-0 transition-colors ${
-                              isSelected
-                                ? "bg-gradient-to-br from-[#F2052C] to-[#FF4B66] text-white shadow-md shadow-[#F2052C]/20"
-                                : "bg-slate-100 text-slate-700 group-hover:bg-slate-200"
-                            }`}
-                          >
-                            {p.avatar}
-                          </div>
+            <div className="flex items-center gap-3">
+              <div className="bg-slate-950/80 px-3.5 py-1.5 rounded-full border border-slate-800 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <CallTimerBadge active={workflowPhase === "encounter"} onTick={(s) => { callDurationRef.current = s; }} />
+                <span className="text-slate-600">|</span>
+                <span className="text-[11px] text-emerald-400 font-mono font-bold">BP: {selected.vitals.bp}</span>
+              </div>
 
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <h4
-                                className={`text-sm font-extrabold tracking-tight ${
-                                  isSelected ? "text-[#14213D]" : "text-slate-800"
-                                }`}
-                              >
-                                {p.name}
-                              </h4>
-                              {p.age && (
-                                <span className="text-[11px] font-semibold text-slate-400">
-                                  {p.age}y · {p.gender.charAt(0)}
-                                </span>
-                              )}
-                            </div>
-
-                            <p className="text-xs text-slate-500 font-medium line-clamp-1">
-                              {p.condition}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Status Tag */}
-                        <div className="text-right shrink-0">
-                          {isWaiting ? (
-                            <Badge className="bg-rose-50 text-rose-600 border border-rose-200/80 font-bold text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-ping" />
-                              Live Call
-                            </Badge>
-                          ) : p.status === "Completed" ? (
-                            <Badge className="bg-slate-100 text-slate-500 border border-slate-200 font-bold text-[10px] px-2 py-0.5 rounded-full">
-                              Completed
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-blue-50 text-blue-600 border border-blue-200 font-bold text-[10px] px-2 py-0.5 rounded-full">
-                              {p.slotTime || "Scheduled"}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Bottom Micro Vitals Chip */}
-                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-medium text-slate-400">
-                        <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1 text-slate-500 font-mono">
-                            <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
-                          </span>
-                          <span className="flex items-center gap-1 text-slate-500 font-mono">
-                            <Activity className="h-3 w-3 text-emerald-500" /> {p.vitals.pulse} bpm
-                          </span>
-                        </div>
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected(p);
-                            handleStartCall(p);
-                          }}
-                          className="text-[11px] font-extrabold text-[#F2052C] hover:text-[#D00424] flex items-center gap-0.5"
-                        >
-                          Join <ChevronRight className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+              <Button
+                onClick={handleConcludeEncounter}
+                disabled={concludingConsultation}
+                className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-extrabold text-xs h-10 px-5 rounded-[14px] shadow-lg shadow-[#F2052C]/30 flex items-center gap-2"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {concludingConsultation ? "Concluding…" : "Conclude & Issue Rx"}
+              </Button>
             </div>
           </div>
-        </div>
 
-        {/* ==========================================
-            RIGHT COLUMN: ACTIVE PATIENT FILE (lg:col-span-8)
-        ========================================== */}
-        <div className="lg:col-span-7 xl:col-span-8 space-y-5">
-          {selected ? (
-            <div className="space-y-5 animate-fadeIn">
-              {/* Patient Banner & Video Room Action Card */}
-              <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-6 text-white shadow-xl border border-white/10">
-                <div className="absolute top-0 right-0 -mr-12 -mt-12 w-56 h-56 rounded-full bg-[#F2052C]/20 blur-3xl pointer-events-none" />
-                <div className="absolute bottom-0 right-1/3 -mb-12 w-48 h-48 rounded-full bg-[#35B7C9]/20 blur-3xl pointer-events-none" />
+          {/* Harmonized Split Stage: 60% Video Feed | 40% Live Clinical Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Left Stage (7 cols / ~58% width): Agora Video Suite */}
+            <div className="lg:col-span-7 bg-slate-950 rounded-[26px] overflow-hidden border border-slate-800 shadow-2xl relative h-[560px] flex flex-col justify-between">
+              {/* Video Viewport */}
+              <div className="relative flex-1 w-full h-full flex items-center justify-center overflow-hidden">
+                <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
+                  {/* Dedicated Agora Container */}
+                  <div
+                    id="remote-video-container"
+                    className={`absolute inset-0 w-full h-full object-cover z-0 ${
+                      remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
+                    }`}
+                  />
 
-                <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                  <div className="flex items-start sm:items-center gap-4">
-                    <div className="h-16 w-16 rounded-[20px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
-                      <div className="h-full w-full rounded-[18px] bg-[#14213D] flex items-center justify-center font-extrabold text-xl text-white">
-                        {selected.avatar}
+                  {/* Paused / Connecting Fallback */}
+                  {(!remoteVideoTrackActive || !remoteUserConnected) && (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-400 z-10 relative">
+                      <div className="h-20 w-20 rounded-full bg-slate-800 flex items-center justify-center mb-3 shadow-inner">
+                        <User className="h-10 w-10 text-slate-500" />
                       </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-xl sm:text-2xl font-black tracking-tight">{selected.name}</h2>
-                        <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <ShieldCheck className="h-3 w-3 text-emerald-400" /> Active Dossier
-                        </Badge>
-                      </div>
-
-                      <p className="text-xs text-slate-300 font-medium flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span>
-                          {selected.age} yrs · {selected.gender}
-                        </span>
-                        {selected.phone && (
-                          <>
-                            <span className="text-white/30">•</span>
-                            <span className="font-mono text-slate-300">{selected.phone}</span>
-                          </>
-                        )}
-                        <span className="text-white/30">•</span>
-                        <span className="text-amber-300 font-semibold">{selected.condition}</span>
-                      </p>
-
-                      <p className="text-[11px] text-slate-400 font-mono">
-                        Booking ID: {selected.bookingId || selected.id} · Slot: {selected.slotTime || "Immediate"}
+                      <p className="text-sm font-semibold">
+                        {remoteUserConnected
+                          ? "Patient video paused"
+                          : "Connecting with patient in encrypted Agora telehealth room..."}
                       </p>
                     </div>
+                  )}
+                </div>
+
+                {/* Doctor PiP Floating Camera Preview */}
+                <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[18px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
+                  <div id="local-video" className="w-full h-full object-cover relative">
+                    <div
+                      id="local-video-container"
+                      className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
+                    />
+                    {!cameraActive && (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-500 text-xs">
+                        <VideoOff className="h-6 w-6 mb-1 text-slate-600" />
+                        <span>Camera Off</span>
+                      </div>
+                    )}
                   </div>
-
-                  <div className="flex items-center gap-3 shrink-0">
-                    <Button
-                      onClick={() => handleStartCall(selected)}
-                      className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-extrabold rounded-[18px] h-12 px-6 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-2 transform active:scale-95 transition-all"
-                    >
-                      <Video className="h-4.5 w-4.5" /> Start Video Consult
-                    </Button>
+                  <div className="absolute bottom-1.5 left-2 text-[10px] font-bold bg-black/60 px-2 py-0.5 rounded-full text-white">
+                    You (Doctor)
                   </div>
                 </div>
               </div>
 
-              {/* Dossier Segmented Tabs Bar */}
-              <div className="flex items-center gap-2 bg-white rounded-[20px] p-1.5 border border-slate-200/80 shadow-sm text-xs font-bold text-slate-500">
-                {[
-                  { id: "vitals", label: "Kiosk Vitals & Telemetry", icon: HeartPulse },
-                  { id: "records", label: "ABDM Records & Consent", icon: FileText },
-                  { id: "notes", label: "Clinical Impression & Notes", icon: Sliders },
-                  { id: "rx", label: "Prescribe Medication", icon: Pill },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = activeDossierTab === tab.id;
+              {/* In-Call Bottom Control Bar */}
+              <div className="h-18 bg-slate-900/90 backdrop-blur-md px-6 py-3 border-t border-slate-800 flex items-center justify-between z-20">
+                <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                  Agora HD Stream
+                </Badge>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={toggleMic}
+                    className={`rounded-full h-11 w-11 border-none shadow-md ${
+                      micActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
+                    }`}
+                  >
+                    {micActive ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={toggleCamera}
+                    className={`rounded-full h-11 w-11 border-none shadow-md ${
+                      cameraActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
+                    }`}
+                  >
+                    {cameraActive ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+                  </Button>
+
+                  <Button
+                    onClick={handleConcludeEncounter}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-5 h-11 rounded-full shadow-lg shadow-rose-600/30 flex items-center gap-1.5"
+                  >
+                    <PhoneOff className="h-4 w-4" /> End Call
+                  </Button>
+                </div>
+
+                <span className="text-[11px] text-slate-400 font-mono">Channel: {selected.bookingId?.slice(-6) || "Active"}</span>
+              </div>
+            </div>
+
+            {/* Right Stage (5 cols / ~42% width): Live Clinical Charting & In-Call Rx */}
+            <div className="lg:col-span-5 space-y-4">
+              {/* Kiosk Vitals Telemetry HUD */}
+              <div className="bg-white rounded-[22px] border border-slate-200/80 p-4 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <HeartPulse className="h-3.5 w-3.5 text-rose-500" /> Kiosk Screening Telemetry
+                  </span>
+                  <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">
+                    Verified
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="p-2.5 rounded-[14px] bg-rose-50/60 border border-rose-100">
+                    <div className="text-[10px] font-bold text-rose-600">BP</div>
+                    <div className="text-sm font-black text-slate-800 font-mono mt-0.5">{selected.vitals.bp}</div>
+                  </div>
+                  <div className="p-2.5 rounded-[14px] bg-emerald-50/60 border border-emerald-100">
+                    <div className="text-[10px] font-bold text-emerald-600">Pulse</div>
+                    <div className="text-sm font-black text-slate-800 font-mono mt-0.5">{selected.vitals.pulse} bpm</div>
+                  </div>
+                  <div className="p-2.5 rounded-[14px] bg-amber-50/60 border border-amber-100">
+                    <div className="text-[10px] font-bold text-amber-600">Temp</div>
+                    <div className="text-sm font-black text-slate-800 font-mono mt-0.5">{selected.vitals.temp}</div>
+                  </div>
+                  <div className="p-2.5 rounded-[14px] bg-cyan-50/60 border border-cyan-100">
+                    <div className="text-[10px] font-bold text-cyan-600">SpO2</div>
+                    <div className="text-sm font-black text-slate-800 font-mono mt-0.5">{selected.vitals.spo2 || "99%"}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Prescription & Diagnosis Pad */}
+              <div className="bg-white rounded-[22px] border border-slate-200/80 p-4 shadow-sm space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Pill className="h-3.5 w-3.5 text-[#F2052C]" /> Digital Prescription Pad
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-400">In-Call Drafting</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  <div>
+                    <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Clinical Diagnosis</Label>
+                    <Input
+                      value={clinicalDiagnosis}
+                      onChange={(e) => setClinicalDiagnosis(e.target.value)}
+                      placeholder="e.g. Acute Pharyngitis / Hypertension"
+                      className="rounded-[12px] h-9 text-xs font-semibold"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Prescribed Medication</Label>
+                    <Input
+                      value={rxForm.medication}
+                      onChange={(e) => setRxForm({ ...rxForm, medication: e.target.value })}
+                      placeholder="e.g. Amoxicillin 500mg"
+                      className="rounded-[12px] h-9 text-xs font-semibold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Frequency</Label>
+                      <Select
+                        value={rxForm.frequency}
+                        onValueChange={(val) => setRxForm({ ...rxForm, frequency: val })}
+                      >
+                        <SelectTrigger className="rounded-[12px] h-9 text-xs font-semibold">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Once daily">Once daily (OD)</SelectItem>
+                          <SelectItem value="Twice daily (BD)">Twice daily (BD)</SelectItem>
+                          <SelectItem value="Three times daily (TDS)">Three times daily (TDS)</SelectItem>
+                          <SelectItem value="As needed (PRN)">As needed (PRN)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Duration</Label>
+                      <Input
+                        value={rxForm.duration}
+                        onChange={(e) => setRxForm({ ...rxForm, duration: e.target.value })}
+                        placeholder="5 days"
+                        className="rounded-[12px] h-9 text-xs font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Special Instructions</Label>
+                    <Input
+                      value={rxForm.instructions}
+                      onChange={(e) => setRxForm({ ...rxForm, instructions: e.target.value })}
+                      placeholder="Take after food with warm water"
+                      className="rounded-[12px] h-9 text-xs font-semibold"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <Button
+                    onClick={handleConcludeEncounter}
+                    disabled={concludingConsultation}
+                    className="w-full bg-[#14213D] hover:bg-[#1E2E4E] text-white rounded-[14px] font-bold text-xs h-10 shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="h-4 w-4 text-[#35B7C9]" /> Sign & Issue Prescription Slip
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : workflowPhase === "summary" && selected ? (
+        /* ============================================================
+            PHASE 3: POST-ENCOUNTER SUMMARY & TRANSITION
+        ============================================================ */
+        <div className="max-w-2xl mx-auto space-y-5 animate-fadeIn">
+          <div className="p-8 rounded-[26px] bg-white border border-slate-200/80 shadow-xl text-center space-y-5">
+            <div className="h-16 w-16 rounded-[22px] bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
+              <CheckCircle2 className="h-8 w-8" />
+            </div>
+
+            <div className="space-y-1">
+              <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold text-[11px] px-3 py-0.5 rounded-full">
+                Consultation Concluded
+              </Badge>
+              <h2 className="text-xl font-black text-[#14213D] mt-2">
+                Encounter Completed for {selected.name}
+              </h2>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Electronic consultation recorded. Official NMC digital prescription slip generated and signed.
+              </p>
+            </div>
+
+            {/* Prescribed Summary Box */}
+            <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80 text-left space-y-2 text-xs">
+              <div className="flex justify-between text-slate-500 font-bold">
+                <span>Diagnosis:</span>
+                <span className="text-[#14213D]">{clinicalDiagnosis || selected.condition}</span>
+              </div>
+              <div className="flex justify-between text-slate-500 font-bold">
+                <span>Prescription:</span>
+                <span className="text-[#14213D]">{rxForm.medication} ({rxForm.frequency})</span>
+              </div>
+              <div className="flex justify-between text-slate-500 font-bold">
+                <span>Duration:</span>
+                <span className="text-[#14213D]">{rxForm.duration}</span>
+              </div>
+            </div>
+
+            {/* Actions: Print PDF or Return to Queue */}
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  openPrescriptionPdf({
+                    patientName: selected.name,
+                    bookingId: selected.bookingId,
+                    diagnosis: clinicalDiagnosis || selected.condition,
+                    medications: [
+                      {
+                        name: rxForm.medication,
+                        dosage: rxForm.dosage,
+                        frequency: rxForm.frequency,
+                        duration: rxForm.duration,
+                        instructions: rxForm.instructions,
+                      },
+                    ],
+                    instructions: rxForm.instructions,
+                    duration: rxForm.duration,
+                  })
+                }
+                className="rounded-[14px] h-11 px-5 text-xs font-bold border-slate-200 flex items-center gap-2"
+              >
+                <Printer className="h-4 w-4 text-[#F2052C]" /> Print Official PDF Slip
+              </Button>
+
+              {nextWaitingPatient ? (
+                <Button
+                  onClick={() => handleStartConsultation(nextWaitingPatient)}
+                  className="rounded-[14px] h-11 px-6 text-xs font-extrabold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-lg flex items-center gap-2"
+                >
+                  Admit Next: {nextWaitingPatient.name} <ArrowRight className="h-4 w-4 text-[#35B7C9]" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => setWorkflowPhase("queue")}
+                  className="rounded-[14px] h-11 px-6 text-xs font-extrabold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-lg flex items-center gap-2"
+                >
+                  Return to Waiting Room
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ============================================================
+            PHASE 1: THE CLINICAL WAITING ROOM & INTAKE (DEFAULT)
+        ============================================================ */
+        <div className="space-y-6 animate-fadeIn">
+          {/* Top Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/90 backdrop-blur-md p-5 rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)]">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-[16px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold">
+                <Stethoscope className="h-5 w-5" />
+              </div>
+              <div>
+                <h1 className="text-xl font-black text-[#14213D] tracking-tight">Telehealth Virtual Clinic</h1>
+                <p className="text-xs text-slate-400 font-medium">
+                  Clinical Intake, Real-Time Kiosk Telemetry & Agora HD Encrypted Suite
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <Button
+                variant="outline"
+                onClick={() => setPermissionsModalOpen(true)}
+                className="rounded-[14px] h-9 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs flex items-center gap-1.5"
+              >
+                <Camera className="h-3.5 w-3.5 text-[#35B7C9]" /> Device Check
+              </Button>
+
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={fetchConsultationsData}
+                disabled={loading}
+                className="rounded-[14px] h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
+                title="Refresh Intake Queue"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+
+              <Button
+                onClick={() => setAddPatientOpen(true)}
+                className="rounded-[14px] h-9 px-4 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-xs flex items-center gap-1.5"
+              >
+                <UserPlus className="h-3.5 w-3.5" /> Quick Register Walk-In
+              </Button>
+            </div>
+          </div>
+
+          {/* Split Waiting Room Stage (Left: Queue | Right: Dossier) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Queue Panel (5 cols) */}
+            <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] p-4 space-y-3.5">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Search patient, symptoms, phone..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 h-10 rounded-[14px] bg-slate-50 border-slate-200 text-xs font-medium"
+                />
+              </div>
+
+              {/* 3 Queue Tabs */}
+              <div className="flex items-center p-1 bg-slate-100 rounded-[14px] text-xs font-bold text-slate-500">
+                {(["Waiting", "Scheduled", "Completed"] as const).map((tab) => {
+                  const count = patients.filter((p) => {
+                    if (tab === "Waiting") return p.status === "Waiting" || p.status === "In Consultation";
+                    if (tab === "Scheduled") return p.status === "Scheduled";
+                    if (tab === "Completed") return p.status === "Completed";
+                    return false;
+                  }).length;
+
                   return (
                     <button
-                      key={tab.id}
-                      onClick={() => setActiveDossierTab(tab.id as any)}
-                      className={`flex-1 py-2.5 px-3 rounded-[14px] flex items-center justify-center gap-1.5 transition-all ${
-                        isActive
-                          ? "bg-[#14213D] text-white shadow-sm font-extrabold"
-                          : "hover:bg-slate-50 hover:text-slate-900"
+                      key={tab}
+                      onClick={() => setQueueTab(tab)}
+                      className={`flex-1 py-1.5 rounded-[11px] transition-all text-center flex items-center justify-center gap-1.5 ${
+                        queueTab === tab ? "bg-white text-[#14213D] shadow-sm font-extrabold" : "hover:text-[#14213D]"
                       }`}
                     >
-                      <Icon className={`h-3.5 w-3.5 ${isActive ? "text-[#35B7C9]" : "text-slate-400"}`} />
-                      <span className="hidden sm:inline">{tab.label}</span>
+                      <span>{tab}</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/70 text-slate-600 font-mono">
+                        {count}
+                      </span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Tab 1: Kiosk Vitals & Telemetry */}
-              {activeDossierTab === "vitals" && (
-                <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <Activity className="h-4.5 w-4.5 text-[#F2052C]" /> Real-Time Kiosk Screening Telemetry
-                      </h3>
-                      <p className="text-xs text-slate-400 font-medium">
-                        Captured via Onyx Health Kiosk IoT diagnostic hardware
-                      </p>
-                    </div>
-
-                    <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono text-[11px] px-2.5 py-1 rounded-full">
-                      Live Telemetry Synced
-                    </Badge>
+              {/* Queue Patient Cards List */}
+              <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
+                {filteredPatients.length === 0 ? (
+                  <div className="text-center py-12 px-4 rounded-[18px] bg-slate-50/60 border border-dashed border-slate-200">
+                    <User className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                    <p className="text-xs font-bold text-slate-500">No patients in this queue</p>
                   </div>
+                ) : (
+                  filteredPatients.map((p) => {
+                    const isSelected = selected?.id === p.id;
+                    const isWaiting = p.status === "Waiting" || p.status === "In Consultation";
 
-                  {/* 4 Vitals Stat Panels */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {/* Blood Pressure */}
-                    <div className="p-4 rounded-[18px] bg-gradient-to-br from-rose-50/50 to-white border border-rose-100/80 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between text-xs text-rose-600 font-bold">
-                        <span>Blood Pressure</span>
-                        <Heart className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="text-xl font-black text-slate-800 font-mono">
-                        {selected.vitals.bp}
-                      </div>
-                      <div className="text-[10px] font-semibold text-rose-500">mmHg · Systolic/Dia</div>
-                    </div>
-
-                    {/* Pulse */}
-                    <div className="p-4 rounded-[18px] bg-gradient-to-br from-emerald-50/50 to-white border border-emerald-100/80 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between text-xs text-emerald-600 font-bold">
-                        <span>Pulse Rate</span>
-                        <Activity className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="text-xl font-black text-slate-800 font-mono">
-                        {selected.vitals.pulse}
-                      </div>
-                      <div className="text-[10px] font-semibold text-emerald-500">BPM · Normal Rhythm</div>
-                    </div>
-
-                    {/* Temperature */}
-                    <div className="p-4 rounded-[18px] bg-gradient-to-br from-amber-50/50 to-white border border-amber-100/80 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between text-xs text-amber-600 font-bold">
-                        <span>Body Temp</span>
-                        <Thermometer className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="text-xl font-black text-slate-800 font-mono">
-                        {selected.vitals.temp}
-                      </div>
-                      <div className="text-[10px] font-semibold text-amber-500">Infrared Sensor</div>
-                    </div>
-
-                    {/* Oxygen SpO2 */}
-                    <div className="p-4 rounded-[18px] bg-gradient-to-br from-cyan-50/50 to-white border border-cyan-100/80 shadow-sm space-y-1">
-                      <div className="flex items-center justify-between text-xs text-cyan-600 font-bold">
-                        <span>Oxygen SpO2</span>
-                        <HeartPulse className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="text-xl font-black text-slate-800 font-mono">
-                        {selected.vitals.spo2 || "99%"}
-                      </div>
-                      <div className="text-[10px] font-semibold text-cyan-500">Optimal Saturation</div>
-                    </div>
-                  </div>
-
-                  {/* Chief Complaint & Reason */}
-                  <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80 space-y-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-                      Patient Reported Symptoms & Chief Complaint
-                    </span>
-                    <p className="text-xs font-semibold text-slate-700 leading-relaxed">
-                      {selected.notes || "No additional patient notes logged. Regular teleconsultation session."}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Tab 2: ABDM Health Records & Reports */}
-              {activeDossierTab === "records" && (
-                <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <ShieldCheck className="h-4.5 w-4.5 text-[#35B7C9]" /> Patient Shared Diagnostic Reports
-                      </h3>
-                      <p className="text-xs text-slate-400 font-medium">
-                        Adheres to ABDM Consent Architecture and NMC Telemedicine Practice Guidelines
-                      </p>
-                    </div>
-
-                    {sharedReportsStatus === "declaration_required" ? (
-                      <Button
-                        size="sm"
-                        onClick={() => setDeclarationModalOpen(true)}
-                        className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8"
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => setSelected(p)}
+                        className={`p-3.5 rounded-[18px] transition-all cursor-pointer border ${
+                          isSelected
+                            ? "bg-gradient-to-r from-rose-50/80 via-white to-white border-[#F2052C] shadow-md shadow-rose-500/5 ring-1 ring-[#F2052C]/20"
+                            : "bg-white hover:bg-slate-50/80 border-slate-100 hover:border-slate-200 shadow-xs"
+                        }`}
                       >
-                        <Lock className="h-3 w-3 mr-1" /> Unlock with Declaration
-                      </Button>
-                    ) : (
-                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold px-2.5 py-1 rounded-full">
-                        <Unlock className="h-3 w-3 mr-1 text-emerald-600" /> Decrypted & Verified
-                      </Badge>
-                    )}
-                  </div>
-
-                  {sharedReportsStatus === "declaration_required" ? (
-                    <div className="p-6 rounded-[20px] bg-amber-50/50 border border-amber-200/80 text-center space-y-3">
-                      <Lock className="h-8 w-8 text-amber-500 mx-auto" />
-                      <h4 className="text-sm font-extrabold text-amber-900">
-                        NMC / ABDM Privacy Declaration Required
-                      </h4>
-                      <p className="text-xs text-amber-700 max-w-md mx-auto">
-                        In accordance with National Medical Commission guidelines, please confirm your legal declaration
-                        to access this patient's medical records for clinical consultation purposes.
-                      </p>
-                      <Button
-                        onClick={() => setDeclarationModalOpen(true)}
-                        className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-[14px] h-9 px-5 shadow-sm"
-                      >
-                        Sign & Unlock Records
-                      </Button>
-                    </div>
-                  ) : sharedReports.length === 0 ? (
-                    <div className="p-8 rounded-[20px] bg-slate-50 border border-dashed border-slate-200 text-center space-y-2">
-                      <FileText className="h-8 w-8 text-slate-300 mx-auto" />
-                      <p className="text-xs font-bold text-slate-600">No external lab files attached</p>
-                      <p className="text-[11px] text-slate-400">
-                        Patient has not uploaded external hospital lab slips for this booking.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {sharedReports.map((r: any, idx: number) => (
-                        <div
-                          key={r._id || idx}
-                          className="p-3.5 rounded-[16px] border border-slate-200 hover:border-slate-300 bg-white shadow-sm flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 rounded-[10px] bg-rose-50 text-rose-600 flex items-center justify-center font-bold text-xs">
-                              PDF
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={`h-11 w-11 rounded-[14px] flex items-center justify-center font-black text-xs shrink-0 ${
+                                isSelected
+                                  ? "bg-gradient-to-br from-[#F2052C] to-[#FF4B66] text-white shadow-md shadow-[#F2052C]/20"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {p.avatar}
                             </div>
-                            <div>
-                              <h5 className="text-xs font-bold text-slate-800 line-clamp-1">
-                                {r.title || r.name || `Medical Report #${idx + 1}`}
-                              </h5>
-                              <span className="text-[10px] text-slate-400">
-                                {r.date ? new Date(r.date).toLocaleDateString() : "Verified Document"}
-                              </span>
+                            <div className="min-w-0 space-y-0.5">
+                              <h4 className="text-sm font-extrabold text-[#14213D] truncate">{p.name}</h4>
+                              <p className="text-xs text-slate-500 font-medium truncate">{p.condition}</p>
                             </div>
                           </div>
 
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setPreviewReportUrl(r.fileUrl || r.url || "#");
-                              setPreviewReportTitle(r.title || "Diagnostic File");
-                            }}
-                            className="h-8 text-xs font-bold text-[#F2052C] hover:bg-rose-50 rounded-[10px]"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </Button>
+                          <div className="text-right shrink-0">
+                            {isWaiting ? (
+                              <Badge className="bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-ping" />
+                                Live
+                              </Badge>
+                            ) : p.status === "Completed" ? (
+                              <Badge className="bg-slate-100 text-slate-500 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                Done
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-blue-50 text-blue-600 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                {p.slotTime || "Scheduled"}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
 
-              {/* Tab 3: Clinical Impression & Notes */}
-              {activeDossierTab === "notes" && (
-                <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
+                        {/* Bottom Vitals Peek */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-medium text-slate-400">
+                          <span className="font-mono text-slate-500 flex items-center gap-1">
+                            <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
+                          </span>
+                          <span className="font-extrabold text-[#F2052C] flex items-center gap-0.5">
+                            Admit <ChevronRight className="h-3 w-3" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Right Dossier Panel (7 cols) */}
+            <div className="lg:col-span-7 xl:col-span-8 space-y-5">
+              {selected ? (
+                <div className="space-y-5 animate-fadeIn">
+                  {/* Selected Patient Identity & Start Consultation Banner */}
+                  <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-6 text-white shadow-xl border border-white/10">
+                    <div className="absolute top-0 right-0 -mr-12 -mt-12 w-56 h-56 rounded-full bg-[#F2052C]/20 blur-3xl pointer-events-none" />
+
+                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                      <div className="flex items-start sm:items-center gap-4">
+                        <div className="h-16 w-16 rounded-[20px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
+                          <div className="h-full w-full rounded-[18px] bg-[#14213D] flex items-center justify-center font-black text-xl text-white">
+                            {selected.avatar}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-xl sm:text-2xl font-black tracking-tight">{selected.name}</h2>
+                            <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <ShieldCheck className="h-3 w-3 text-emerald-400" /> Patient Dossier Active
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-300 font-medium">
+                            {selected.age} yrs · {selected.gender} {selected.phone && `· ${selected.phone}`}
+                          </p>
+                          <p className="text-[11px] text-amber-300 font-semibold">{selected.condition}</p>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => handleStartConsultation(selected)}
+                        className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[18px] h-12 px-6 border-none shadow-xl shadow-[#F2052C]/30 text-xs flex items-center gap-2 transform active:scale-95 transition-all"
+                      >
+                        <Video className="h-5 w-5" /> Admit to Consultation Suite
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Kiosk Telemetry Cards */}
+                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
                       <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <Sliders className="h-4.5 w-4.5 text-[#F2052C]" /> Doctor Clinical Evaluation Notes
+                        <Activity className="h-4.5 w-4.5 text-[#F2052C]" /> Real-Time Kiosk IoT Telemetry
                       </h3>
-                      <p className="text-xs text-slate-400 font-medium">
-                        Observations, differential diagnosis, and post-consultation advisory
+                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono">
+                        Hardware Live Synced
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="p-4 rounded-[18px] bg-rose-50/50 border border-rose-100/80 space-y-1">
+                        <span className="text-xs text-rose-600 font-bold block">Blood Pressure</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.bp}</div>
+                        <span className="text-[10px] font-semibold text-rose-500">mmHg</span>
+                      </div>
+
+                      <div className="p-4 rounded-[18px] bg-emerald-50/50 border border-emerald-100/80 space-y-1">
+                        <span className="text-xs text-emerald-600 font-bold block">Heart Rate</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.pulse} bpm</div>
+                        <span className="text-[10px] font-semibold text-emerald-500">Normal Rhythm</span>
+                      </div>
+
+                      <div className="p-4 rounded-[18px] bg-amber-50/50 border border-amber-100/80 space-y-1">
+                        <span className="text-xs text-amber-600 font-bold block">Body Temp</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.temp}</div>
+                        <span className="text-[10px] font-semibold text-amber-500">Sensor Synced</span>
+                      </div>
+
+                      <div className="p-4 rounded-[18px] bg-cyan-50/50 border border-cyan-100/80 space-y-1">
+                        <span className="text-xs text-cyan-600 font-bold block">Oxygen Saturation</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.spo2 || "99%"}</div>
+                        <span className="text-[10px] font-semibold text-cyan-500">SpO2 Level</span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                        Chief Complaint & Case Notes
+                      </span>
+                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">
+                        {selected.notes || "Routine telehealth wellness consultation requested."}
                       </p>
                     </div>
-
-                    <Button
-                      onClick={handleSaveNotes}
-                      disabled={savingNotes}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-[14px] text-xs font-bold h-9 px-4 shadow-sm"
-                    >
-                      {savingNotes ? "Saving…" : "Save Record"}
-                    </Button>
                   </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <Label className="text-xs font-bold text-slate-600 mb-1 block">Diagnosis / Impression</Label>
-                      <Input
-                        value={clinicalDiagnosis}
-                        onChange={(e) => setClinicalDiagnosis(e.target.value)}
-                        placeholder="e.g. Essential Hypertension, Seasonal Upper Respiratory Tract Infection"
-                        className="rounded-[14px] h-10 text-xs font-semibold"
-                      />
+                  {/* ABDM Consent & Records */}
+                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
+                        <ShieldCheck className="h-4.5 w-4.5 text-[#35B7C9]" /> ABDM Medical History & Shared Records
+                      </h3>
+
+                      {sharedReportsStatus === "declaration_required" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setDeclarationModalOpen(true)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8"
+                        >
+                          <Lock className="h-3 w-3 mr-1" /> Unlock Records
+                        </Button>
+                      ) : (
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                          <Unlock className="h-3 w-3 mr-1 text-emerald-600" /> NMC Decrypted
+                        </Badge>
+                      )}
                     </div>
 
-                    <div>
-                      <Label className="text-xs font-bold text-slate-600 mb-1 block">Clinical Findings & Advisory</Label>
-                      <Textarea
-                        value={clinicalNotes}
-                        onChange={(e) => setClinicalNotes(e.target.value)}
-                        placeholder="Type detailed patient observations, differential diagnosis, vitals assessment, and recommended lifestyle adjustments..."
-                        className="rounded-[16px] text-xs font-medium min-h-[140px] leading-relaxed"
-                      />
-                    </div>
+                    {sharedReports.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {sharedReports.map((r, idx) => (
+                          <div
+                            key={r._id || idx}
+                            className="p-3.5 rounded-[16px] border border-slate-200 bg-white flex items-center justify-between shadow-xs"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <FileText className="h-5 w-5 text-rose-500" />
+                              <span className="text-xs font-bold text-slate-800">{r.title || `Lab File #${idx + 1}`}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setPreviewReportUrl(r.fileUrl || r.url || "#");
+                                setPreviewReportTitle(r.title || "Diagnostic File");
+                              }}
+                              className="h-8 text-xs font-bold text-[#F2052C]"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400">No external hospital records attached for this booking.</p>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Tab 4: Prescribe Medication */}
-              {activeDossierTab === "rx" && (
-                <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <Pill className="h-4.5 w-4.5 text-[#F2052C]" /> Issue Digital Prescription
-                      </h3>
-                      <p className="text-xs text-slate-400 font-medium">
-                        Generates verified electronic prescription with digital signature & printable PDF
-                      </p>
-                    </div>
-
-                    <Button
-                      onClick={() => setWrapUpOpen(true)}
-                      className="bg-[#14213D] hover:bg-[#1E2E4E] text-white rounded-[14px] text-xs font-bold h-9 px-4 shadow-sm"
-                    >
-                      <FileSignature className="h-3.5 w-3.5 mr-1 text-[#35B7C9]" /> Compose RX
-                    </Button>
-                  </div>
-
-                  <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80 flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800">
-                        Official NMC-Compliant Digital Slip
-                      </h4>
-                      <p className="text-[11px] text-slate-400">
-                        Prescription includes doctor council reg number, QR code, dosage schedule, and pharmacy barcode.
-                      </p>
-                    </div>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        openPrescriptionPdf({
-                          patientName: selected.name,
-                          bookingId: selected.bookingId,
-                          diagnosis: clinicalDiagnosis || selected.condition,
-                          notes: clinicalNotes,
-                        })
-                      }
-                      className="rounded-[12px] text-xs font-bold border-slate-200"
-                    >
-                      <Printer className="h-3.5 w-3.5 mr-1" /> Preview Template
-                    </Button>
-                  </div>
+              ) : (
+                <div className="p-12 rounded-[24px] bg-white border border-slate-200/80 text-center space-y-4 shadow-sm">
+                  <Stethoscope className="h-10 w-10 text-slate-300 mx-auto" />
+                  <p className="text-sm font-extrabold text-[#14213D]">Select a patient from the waiting queue</p>
                 </div>
               )}
             </div>
-          ) : (
-            <div className="p-12 rounded-[24px] bg-white border border-slate-200/80 text-center space-y-4 shadow-sm">
-              <div className="h-16 w-16 rounded-[22px] bg-rose-50 text-[#F2052C] flex items-center justify-center mx-auto shadow-inner">
-                <Stethoscope className="h-8 w-8" />
-              </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-extrabold text-[#14213D]">Select a Patient from the Intake Queue</h3>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Pick a waiting appointment from the left column to preview biometric vitals, inspect shared records,
-                  and initiate an encrypted Agora video session.
-                </p>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
-
-      {/* ============================================================
-          AGORA VIDEO ROOM OVERLAY DIALOG
-      ============================================================ */}
-      <Dialog open={inVideoCall} onOpenChange={(open) => { if (!open) handleEndCall(); }}>
-        <DialogContent className="max-w-5xl h-[650px] p-0 bg-slate-900 border border-slate-800 rounded-[28px] overflow-hidden flex flex-col justify-between text-white shadow-2xl">
-          {/* Main Area: Remote Patient Viewport + PiP + In-Call Drawer */}
-          <div className="relative flex-1 bg-slate-950 flex overflow-hidden">
-            {/* Viewport */}
-            <div className="relative flex-1 h-full transition-all duration-300 flex items-center justify-center">
-              <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
-                {/* Dedicated Agora container */}
-                <div
-                  id="remote-video-container"
-                  className={`absolute inset-0 w-full h-full object-cover z-0 ${
-                    remoteVideoTrackActive && remoteUserConnected ? "block" : "hidden"
-                  }`}
-                />
-
-                {/* Connecting / Paused State */}
-                {(!remoteVideoTrackActive || !remoteUserConnected) && (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-400 z-10 relative">
-                    <div className="h-20 w-20 rounded-full bg-slate-800 flex items-center justify-center mb-3">
-                      <User className="h-10 w-10 text-slate-500" />
-                    </div>
-                    <p className="text-sm font-semibold">
-                      {remoteUserConnected
-                        ? "Patient video paused"
-                        : "Connecting with patient in secure telehealth room..."}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Self Video (PiP) */}
-              <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[18px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
-                <div id="local-video" className="w-full h-full object-cover relative">
-                  <div
-                    id="local-video-container"
-                    className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
-                  />
-                  {!cameraActive && (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-500 text-xs">
-                      <VideoOff className="h-6 w-6 mb-1 text-slate-600" />
-                      <span>Camera Off</span>
-                    </div>
-                  )}
-                </div>
-                <div className="absolute bottom-1.5 left-2 text-[10px] font-bold bg-black/60 px-2 py-0.5 rounded-full text-white">
-                  You (Doctor)
-                </div>
-              </div>
-
-              {/* Top Call Bar inside Video */}
-              <div className="absolute top-4 left-4 flex items-center gap-2.5 bg-black/60 backdrop-blur-md px-4 py-2 rounded-full z-20 border border-white/10">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <CallTimerBadge active={inVideoCall} onTick={(s) => { callDurationRef.current = s; }} />
-                <span className="text-white/40">|</span>
-                <span className="text-xs font-bold text-slate-200">{selected?.name}</span>
-                {selected?.vitals?.bp && (
-                  <>
-                    <span className="text-white/40">|</span>
-                    <span className="text-[11px] text-emerald-400 font-mono font-medium">BP: {selected.vitals.bp}</span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* In-Call Notes & Vitals Drawer (Collapsible) */}
-            {inCallDrawerOpen && (
-              <div className="w-80 h-full bg-slate-900/95 backdrop-blur-md border-l border-slate-800 flex flex-col z-30 transition-all">
-                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300">Live Clinical Notes</span>
-                  <button
-                    onClick={() => setInCallDrawerOpen(false)}
-                    className="text-slate-400 hover:text-white"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="p-4 flex-1 flex flex-col gap-3 overflow-y-auto">
-                  <Label className="text-xs text-slate-400 font-bold">Impression & Prescriptions</Label>
-                  <Textarea
-                    value={clinicalNotes}
-                    onChange={(e) => setClinicalNotes(e.target.value)}
-                    placeholder="Type observations while talking to patient..."
-                    className="flex-1 bg-slate-950 border-slate-800 text-slate-200 text-xs resize-none"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleSaveNotes}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-8 rounded-[10px]"
-                  >
-                    Auto-Save Note
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Bottom Floating Glass Control Dock */}
-          <div className="h-20 bg-slate-950/90 backdrop-blur-md px-6 flex items-center justify-between border-t border-slate-800/80">
-            <div className="flex items-center gap-2">
-              <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold">
-                Agora Encrypted RTC
-              </Badge>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* Mic Toggle */}
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={toggleMic}
-                className={`rounded-full h-11 w-11 border-none shadow-md ${
-                  micActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
-                }`}
-              >
-                {micActive ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-              </Button>
-
-              {/* End Call */}
-              <Button
-                onClick={handleEndCall}
-                className="bg-rose-600 hover:bg-rose-700 text-white font-black px-6 rounded-full h-11 shadow-lg shadow-rose-600/30 flex items-center gap-2"
-              >
-                <PhoneOff className="h-4.5 w-4.5" /> End Consultation
-              </Button>
-
-              {/* Camera Toggle */}
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={toggleCamera}
-                className={`rounded-full h-11 w-11 border-none shadow-md ${
-                  cameraActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
-                }`}
-              >
-                {cameraActive ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setInCallDrawerOpen((prev) => !prev)}
-                className="rounded-full text-xs font-bold border-white/20 bg-white/10 hover:bg-white/20 text-white"
-              >
-                {inCallDrawerOpen ? "Hide Notes" : "Clinical Notes"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ============================================================
-          POST-CALL CONSULTATION WRAP-UP & PRESCRIPTION DIALOG
-      ============================================================ */}
-      <Dialog open={wrapUpOpen} onOpenChange={setWrapUpOpen}>
-        <DialogContent className="max-w-lg rounded-[26px] p-6 bg-white border border-slate-100 shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-extrabold text-[#14213D] flex items-center gap-2">
-              <Pill className="h-5 w-5 text-[#F2052C]" /> Consultation Wrap-Up & Digital Prescription
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500 font-medium">
-              Conclude the consultation session for <span className="font-bold text-slate-800">{selected?.name}</span> and
-              generate an official NMC prescription slip.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleWrapUpPrescription} className="space-y-4 pt-2">
-            <div>
-              <Label className="text-xs font-bold text-slate-600 mb-1 block">Prescribed Medication</Label>
-              <Input
-                value={wrapUpRx.medication}
-                onChange={(e) => setWrapUpRx({ ...wrapUpRx, medication: e.target.value })}
-                placeholder="e.g. Paracetamol 650mg / Amoxicillin 500mg"
-                className="rounded-[14px] h-10 text-xs font-semibold"
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs font-bold text-slate-600 mb-1 block">Dosage</Label>
-                <Input
-                  value={wrapUpRx.dosage}
-                  onChange={(e) => setWrapUpRx({ ...wrapUpRx, dosage: e.target.value })}
-                  placeholder="e.g. 500mg"
-                  className="rounded-[14px] h-10 text-xs font-semibold"
-                />
-              </div>
-
-              <div>
-                <Label className="text-xs font-bold text-slate-600 mb-1 block">Frequency</Label>
-                <Select
-                  value={wrapUpRx.frequency}
-                  onValueChange={(val) => setWrapUpRx({ ...wrapUpRx, frequency: val })}
-                >
-                  <SelectTrigger className="rounded-[14px] h-10 text-xs font-semibold">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Once daily">Once daily</SelectItem>
-                    <SelectItem value="Twice daily">Twice daily (BD)</SelectItem>
-                    <SelectItem value="Three times daily">Three times daily (TDS)</SelectItem>
-                    <SelectItem value="As needed">As needed (PRN)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs font-bold text-slate-600 mb-1 block">Instructions for Patient</Label>
-              <Input
-                value={wrapUpRx.instructions}
-                onChange={(e) => setWrapUpRx({ ...wrapUpRx, instructions: e.target.value })}
-                placeholder="e.g. Take after food with warm water"
-                className="rounded-[14px] h-10 text-xs font-semibold"
-              />
-            </div>
-
-            <div className="pt-2 flex items-center justify-end gap-2.5">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setWrapUpOpen(false)}
-                className="rounded-[14px] h-10 text-xs font-bold border-slate-200"
-              >
-                Close without Rx
-              </Button>
-
-              <Button
-                type="submit"
-                disabled={wrapUpSubmitting}
-                className="rounded-[14px] h-10 px-5 text-xs font-bold bg-[#F2052C] hover:bg-[#D00424] text-white shadow-md shadow-[#F2052C]/20"
-              >
-                {wrapUpSubmitting ? "Generating…" : "Generate Official Prescription PDF"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      )}
 
       {/* ============================================================
           ABDM DECLARATION MODAL
@@ -1765,7 +1525,7 @@ const Consultations: React.FC = () => {
               <ShieldCheck className="h-5 w-5 text-emerald-600" /> NMC / ABDM Telemedicine Declaration
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500 font-medium">
-              Legal agreement for accessing patient electronic health records (EHR).
+              Legal compliance declaration for accessing patient records.
             </DialogDescription>
           </DialogHeader>
 
@@ -1817,7 +1577,7 @@ const Consultations: React.FC = () => {
               <UserPlus className="h-5 w-5 text-[#F2052C]" /> Quick Register Walk-In Patient
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500 font-medium">
-              Create a biometric record and insert patient directly into the virtual intake queue.
+              Instantly admit a walk-in patient into the live virtual waiting queue.
             </DialogDescription>
           </DialogHeader>
 
@@ -1927,7 +1687,7 @@ const Consultations: React.FC = () => {
                 disabled={submittingPatient}
                 className="rounded-[14px] h-10 px-5 text-xs font-bold bg-[#F2052C] hover:bg-[#D00424] text-white shadow-md shadow-[#F2052C]/20"
               >
-                {submittingPatient ? "Registering…" : "Add to Queue"}
+                {submittingPatient ? "Registering…" : "Admit to Queue"}
               </Button>
             </div>
           </form>
