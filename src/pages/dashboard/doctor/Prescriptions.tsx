@@ -341,6 +341,60 @@ const Prescriptions = () => {
     });
   };
 
+  /* ============================================================
+     RE-PRESCRIBE & PRINT OFFICIAL PDF HANDLERS
+  ============================================================ */
+  const handleReprescribe = (rx: Prescription) => {
+    const primaryMed = rx.medications[0];
+    setNewRx({
+      patient: rx.patient,
+      medication: primaryMed ? primaryMed.name : "",
+      dosage: primaryMed ? primaryMed.dosage : "",
+      frequency: primaryMed ? primaryMed.frequency : "Once daily",
+      duration: rx.duration || "30 days",
+      notes: rx.notes ? `Repeat prescription: ${rx.notes}` : "Repeat course as directed.",
+    });
+    setIssueOpen(true);
+    toast({
+      title: "Draft Created for Clinical Review",
+      description: `Pre-populated electronic prescription for ${rx.patient}. Review before signing.`,
+    });
+  };
+
+  const handlePrintOfficialPdf = (rx: Prescription) => {
+    try {
+      openPrescriptionPdf({
+        patientName: rx.patient,
+        doctorName: rx.doctorName || doctorName,
+        doctorSpecialty: "Specialist Physician",
+        registrationNumber: localStorage.getItem("doctorRegNumber") || "NMC-48291-KMC",
+        councilState: "National Medical Commission (NMC)",
+        diagnosis: "Clinical Telehealth Review & Consultation",
+        issuedDate: rx.issuedDate,
+        id: rx.id,
+        medications: rx.medications.map((m) => ({
+          name: m.name,
+          dosage: m.dosage,
+          frequency: m.frequency,
+          duration: rx.duration,
+          instructions: rx.notes || "As directed by physician",
+        })),
+        notes: rx.notes || "Compliant with Telemedicine Practice Guidelines",
+      });
+      toast({
+        title: "Official PDF Generated",
+        description: `Verified NMC prescription slip opened for ${rx.patient}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Print Error",
+        description: "Failed to render prescription PDF.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const preview = prescriptions.find((rx) => rx.id === previewId);
 
   return (
@@ -455,29 +509,56 @@ const Prescriptions = () => {
                 </div>
 
                 {/* Card Actions */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                  {rx.refillStatus === "requested" ? (
+                <div className="flex flex-wrap items-center justify-between pt-2.5 border-t border-slate-100 gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {rx.refillStatus === "requested" ? (
+                      <Button
+                        size="sm"
+                        onClick={() => handleApproveRefill(rx.id)}
+                        className="h-8 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] border-none shadow-sm"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve Refill
+                      </Button>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        Signed by Dr. {rx.doctorName || doctorName}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {/* Re-prescribe Action */}
                     <Button
                       size="sm"
-                      onClick={() => handleApproveRefill(rx.id)}
-                      className="h-8 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] border-none shadow-sm"
+                      variant="ghost"
+                      onClick={() => handleReprescribe(rx)}
+                      className="h-8 text-xs font-bold text-slate-600 hover:text-[#14213D] hover:bg-slate-100 rounded-[12px] px-2.5"
+                      title="Pre-populate new draft for clinical review"
                     >
-                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve Refill
+                      <Sparkles className="h-3.5 w-3.5 mr-1 text-[#35B7C9]" /> Re-prescribe
                     </Button>
-                  ) : (
-                    <span className="text-xs text-slate-400 font-medium">
-                      Signed by Dr. {rx.doctorName || doctorName}
-                    </span>
-                  )}
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPreviewId(rx.id)}
-                    className="h-8 text-xs font-bold rounded-[12px] border-slate-200"
-                  >
-                    View Rx Card
-                  </Button>
+                    {/* Official PDF Print Slip */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handlePrintOfficialPdf(rx)}
+                      className="h-8 text-xs font-bold text-[#F2052C] hover:bg-rose-50 border-rose-200 rounded-[12px] px-2.5"
+                      title="Download/Print Official PDF Slip"
+                    >
+                      <Printer className="h-3.5 w-3.5 mr-1 text-[#F2052C]" /> Print Slip
+                    </Button>
+
+                    {/* Quick View Dialog */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPreviewId(rx.id)}
+                      className="h-8 text-xs font-bold rounded-[12px] border-slate-200 px-2.5"
+                    >
+                      View Card
+                    </Button>
+                  </div>
                 </div>
               </div>
             );

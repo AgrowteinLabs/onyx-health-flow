@@ -165,6 +165,10 @@ const Schedule = () => {
     return localStorage.getItem("doctor_slot_duration") || "30";
   });
 
+  const [bufferDuration, setBufferDuration] = useState<string>(() => {
+    return localStorage.getItem("doctor_buffer_duration") || "5";
+  });
+
   const [newApt, setNewApt] = useState({
     patient: "",
     type: "Consultation",
@@ -459,6 +463,7 @@ const Schedule = () => {
     try {
       localStorage.setItem("doctor_weekly_availability", JSON.stringify(weeklySchedule));
       localStorage.setItem("doctor_slot_duration", slotDuration);
+      localStorage.setItem("doctor_buffer_duration", bufferDuration);
 
       await updateDoctorAvailability({
         isAvailable: true,
@@ -965,23 +970,42 @@ const Schedule = () => {
           </DialogHeader>
 
           <div className="space-y-4 my-3">
-            {/* Slot Duration Preference */}
-            <div className="p-3.5 bg-slate-50 rounded-[18px] border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <Label className="text-xs font-bold text-[#14213D]">Telehealth Slot Interval</Label>
-                <p className="text-[11px] text-slate-400">Duration allocated per patient video consultation</p>
+            {/* Slot Duration & Buffer Preferences */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3.5 bg-slate-50 rounded-[18px] border border-slate-100 flex flex-col justify-between gap-2">
+                <div>
+                  <Label className="text-xs font-bold text-[#14213D]">Slot Duration</Label>
+                  <p className="text-[10px] text-slate-400">Time per patient video consultation</p>
+                </div>
+                <Select value={slotDuration} onValueChange={setSlotDuration}>
+                  <SelectTrigger className="w-full h-9 rounded-[12px] text-xs font-bold bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-[14px]">
+                    <SelectItem value="15">15 minutes</SelectItem>
+                    <SelectItem value="20">20 minutes</SelectItem>
+                    <SelectItem value="30">30 minutes</SelectItem>
+                    <SelectItem value="45">45 minutes</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <Select value={slotDuration} onValueChange={setSlotDuration}>
-                <SelectTrigger className="w-36 h-9 rounded-[12px] text-xs font-bold bg-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="rounded-[14px]">
-                  <SelectItem value="15">15 min slots</SelectItem>
-                  <SelectItem value="30">30 min slots</SelectItem>
-                  <SelectItem value="45">45 min slots</SelectItem>
-                  <SelectItem value="60">60 min slots</SelectItem>
-                </SelectContent>
-              </Select>
+
+              <div className="p-3.5 bg-slate-50 rounded-[18px] border border-slate-100 flex flex-col justify-between gap-2">
+                <div>
+                  <Label className="text-xs font-bold text-[#14213D]">Consultation Buffer Time</Label>
+                  <p className="text-[10px] text-slate-400">Intermission between back-to-back calls</p>
+                </div>
+                <Select value={bufferDuration} onValueChange={setBufferDuration}>
+                  <SelectTrigger className="w-full h-9 rounded-[12px] text-xs font-bold bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-[14px]">
+                    <SelectItem value="0">No buffer (0m)</SelectItem>
+                    <SelectItem value="5">5 minutes buffer</SelectItem>
+                    <SelectItem value="10">10 minutes buffer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Days Schedule Matrix */}

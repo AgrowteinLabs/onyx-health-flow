@@ -85,6 +85,7 @@ import DoctorProfile from "./pages/dashboard/doctor/DoctorProfile";
 import DoctorTickets from "./pages/dashboard/doctor/DoctorTickets";
 import DoctorNotifications from "./pages/dashboard/doctor/DoctorNotifications";
 import DoctorSettings from "./pages/dashboard/doctor/DoctorSettings";
+import DoctorPayments from "./pages/dashboard/doctor/DoctorPayments";
 
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -273,7 +274,7 @@ const App = () => (
               <Route path="consultations" element={<Consultations />} />
               <Route path="prescriptions" element={<Prescriptions />} />
               <Route path="reports" element={<EA_Reports />} />
-              <Route path="payments" element={<Payments />} />
+              <Route path="payments" element={<DoctorPayments />} />
               <Route path="tickets" element={<DoctorTickets />} />
               <Route path="notifications" element={<DoctorNotifications />} />
               <Route path="settings" element={<DoctorSettings />} />
