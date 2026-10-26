@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import EmptyState from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,8 @@ import {
   Printer,
   Sparkles,
   Stethoscope,
+  Search,
+  Filter,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { listBookings } from "@/services/booking.service";
@@ -110,6 +112,8 @@ const Prescriptions = () => {
   const [doctorName, setDoctorName] = useState<string>(
     localStorage.getItem("userName") || "Licensed Medical Specialist"
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "requested" | "approved" | "none">("all");
 
   const [newRx, setNewRx] = useState({
     patient: "",
@@ -397,8 +401,20 @@ const Prescriptions = () => {
 
   const preview = prescriptions.find((rx) => rx.id === previewId);
 
+  const filteredPrescriptions = useMemo(() => {
+    return prescriptions.filter((rx) => {
+      const matchesSearch =
+        rx.patient.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        rx.medications.some((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (rx.notes && rx.notes.toLowerCase().includes(searchQuery.toLowerCase()));
+      if (!matchesSearch) return false;
+      if (statusFilter !== "all" && rx.refillStatus !== statusFilter) return false;
+      return true;
+    });
+  }, [prescriptions, searchQuery, statusFilter]);
+
   return (
-    <div className="space-y-6 animate-fadeIn pb-12">
+    <div className="space-y-6 animate-fadeIn pb-12 font-sans text-slate-800">
       <PageHeader />
 
       {/* Header */}
@@ -450,6 +466,43 @@ const Prescriptions = () => {
         </div>
       )}
 
+      {/* Search and Status Filters */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/80 backdrop-blur-md p-4 rounded-[20px] border border-slate-200/80 shadow-xs">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search prescriptions by patient, medicine, or notes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-10 rounded-[12px] bg-slate-50 border-slate-200 text-xs font-semibold"
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1 flex items-center gap-1">
+            <Filter className="h-3 w-3" /> Status:
+          </span>
+          {[
+            { id: "all", label: "All e-Rx" },
+            { id: "requested", label: "Refill Requested" },
+            { id: "approved", label: "Approved" },
+            { id: "none", label: "Standard" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setStatusFilter(tab.id as any)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                statusFilter === tab.id
+                  ? "bg-[#14213D] text-white border-[#14213D] shadow-xs"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Prescription Cards Grid */}
       {prescriptions.length === 0 ? (
         <EmptyState
@@ -457,9 +510,15 @@ const Prescriptions = () => {
           title="No prescriptions issued"
           description="Issue electronic prescriptions to your telehealth patients and they will appear here."
         />
+      ) : filteredPrescriptions.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-[24px] border border-slate-200/80 shadow-xs">
+          <Search className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm font-bold text-slate-700">No prescriptions match your search criteria</p>
+          <p className="text-xs text-slate-400 mt-1">Try searching by a different patient name or medicine.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {prescriptions.map((rx) => {
+          {filteredPrescriptions.map((rx) => {
             const rc = REFILL_CONFIG[rx.refillStatus] || REFILL_CONFIG.none;
             const RefillIcon = rc.icon;
 

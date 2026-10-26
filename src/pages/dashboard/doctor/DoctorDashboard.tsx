@@ -30,6 +30,8 @@ import {
   HeartPulse,
   Sliders,
   Check,
+  Mic,
+  ChevronLeft,
 } from "lucide-react";
 
 import {
@@ -57,6 +59,7 @@ interface AppointmentItem {
   reason?: string;
   avatar?: string;
   bookingId?: string;
+  date?: string;
 }
 
 const STATUS_CONFIG: Record<
@@ -148,6 +151,7 @@ const DoctorDashboard = () => {
   const [selectedFilter, setSelectedFilter] = useState<
     "All" | "Upcoming" | "In Progress" | "Completed" | "Expired"
   >("All");
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
 
   // Dynamic Metrics
@@ -269,7 +273,9 @@ const DoctorDashboard = () => {
             const pRes = await viewProfile(pId);
             const prof = pRes?.data || pRes?.profile || pRes;
             if (prof && prof.name) profileMap.set(pId, prof);
-          } catch {}
+          } catch (e) {
+            console.debug("Could not resolve profile:", pId, e);
+          }
         })
       );
 
@@ -301,6 +307,14 @@ const DoctorDashboard = () => {
           timeStr = b.slot;
         }
 
+        const bookingDate = b.slotDate
+          ? String(b.slotDate).slice(0, 10)
+          : b.slot && typeof b.slot === "string" && b.slot.includes("-")
+          ? String(b.slot).slice(0, 10)
+          : b.createdAt
+          ? new Date(b.createdAt).toISOString().slice(0, 10)
+          : new Date().toISOString().slice(0, 10);
+
         formattedAppointments.push({
           id: b._id || `apt-${idx}`,
           patient: pName,
@@ -315,6 +329,7 @@ const DoctorDashboard = () => {
             .slice(0, 2)
             .toUpperCase(),
           bookingId: b._id,
+          date: bookingDate,
         });
       });
 
@@ -336,7 +351,9 @@ const DoctorDashboard = () => {
         try {
           const parsed = JSON.parse(savedRx);
           if (Array.isArray(parsed)) setPrescriptions(parsed.slice(0, 4));
-        } catch {}
+        } catch (e) {
+          console.debug("Could not parse saved prescriptions cache", e);
+        }
       }
     } catch (err) {
       console.warn("Could not retrieve all doctor live metrics:", err);
@@ -379,12 +396,21 @@ const DoctorDashboard = () => {
   };
 
   /* ============================================================
-     APPOINTMENT FILTERING & NEXT PATIENT
+     APPOINTMENT FILTERING & NEXT PATIENT (BY SELECTED DATE)
   ============================================================ */
   const filteredAppointments = useMemo(() => {
-    if (selectedFilter === "All") return appointments;
-    return appointments.filter((apt) => apt.status === selectedFilter);
-  }, [appointments, selectedFilter]);
+    const selectedDateStr = selectedDate.toISOString().slice(0, 10);
+    return appointments.filter((apt) => {
+      // Date match
+      const aptDate = apt.date || new Date().toISOString().slice(0, 10);
+      const isDateMatch = aptDate === selectedDateStr;
+      if (!isDateMatch) return false;
+
+      // Status match
+      if (selectedFilter === "All") return true;
+      return apt.status === selectedFilter;
+    });
+  }, [appointments, selectedDate, selectedFilter]);
 
   const nextPatient = useMemo(() => {
     return (
@@ -401,8 +427,22 @@ const DoctorDashboard = () => {
     <DashboardLayout>
       {isMainDashboard ? (
         <div className="space-y-6 pb-12 animate-fadeIn font-sans text-slate-800">
-          {/* Top Page Header */}
-          <PageHeader />
+          {/* Top Page Header with Prominent Device Check */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <PageHeader />
+            <div className="flex items-center gap-2 -mt-2 sm:mt-0 mb-3 sm:mb-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPermissionsModalOpen(true)}
+                className="rounded-[14px] border-slate-200 bg-white hover:bg-slate-50 text-[#14213D] h-9 px-3.5 text-xs font-extrabold flex items-center gap-2 shadow-xs"
+              >
+                <Camera className="h-4 w-4 text-[#35B7C9]" />
+                <Mic className="h-4 w-4 text-[#F2052C]" />
+                <span>Device Check</span>
+              </Button>
+            </div>
+          </div>
 
           {/* ============================================================
               1. DOCTOR IDENTITY & AVAILABILITY COMMAND HERO
@@ -525,14 +565,6 @@ const DoctorDashboard = () => {
                 >
                   <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 </Button>
-
-                {/* Direct Launch Telehealth Room Button */}
-                <Button
-                  onClick={() => navigate("/dashboard/doctor/consultations")}
-                  className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-extrabold rounded-[18px] h-11 px-5 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-2 transform active:scale-95 transition-all"
-                >
-                  <Video className="h-4 w-4" /> Open Virtual Clinic
-                </Button>
               </div>
             </div>
           </div>
@@ -588,22 +620,9 @@ const DoctorDashboard = () => {
           )}
 
           {/* ============================================================
-              3. 4 CLINICAL STAT CARDS (Refined & Clickable)
+              3. CLINICAL STATUS CARDS (Refined & Clinical-Centric)
           ============================================================ */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            <div
-              onClick={() => navigate("/dashboard/doctor/schedule")}
-              className="cursor-pointer transition-transform hover:scale-[1.02]"
-            >
-              <StatCard
-                title="Today's Appointments"
-                value={stats.todayAppointments}
-                icon={Calendar}
-                variant="primary"
-                trend={{ value: "Live Schedule", isPositive: true }}
-              />
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
             <div
               onClick={() => navigate("/dashboard/doctor/consultations")}
               className="cursor-pointer transition-transform hover:scale-[1.02]"
@@ -612,8 +631,8 @@ const DoctorDashboard = () => {
                 title="Active in Queue"
                 value={stats.pendingConsultations}
                 icon={Video}
-                variant="secondary"
-                trend={{ value: "Virtual Clinic", isPositive: true }}
+                variant="primary"
+                trend={{ value: "Live Triage", isPositive: true }}
               />
             </div>
 
@@ -626,20 +645,20 @@ const DoctorDashboard = () => {
                 value={stats.reportsToReview}
                 icon={FileText}
                 variant="warning"
-                trend={{ value: "Kiosk Vitals", isPositive: true }}
+                trend={{ value: "Kiosk Vitals & Labs", isPositive: true }}
               />
             </div>
 
             <div
-              onClick={() => navigate("/dashboard/doctor/payments")}
+              onClick={() => navigate("/dashboard/doctor/schedule")}
               className="cursor-pointer transition-transform hover:scale-[1.02]"
             >
               <StatCard
-                title="This Month Earnings"
-                value={stats.thisMonthEarnings}
-                icon={CreditCard}
-                variant="success"
-                trend={{ value: "Razorpay Auto-Settled", isPositive: true }}
+                title="Working Hours & Shifts"
+                value="Active Shifts"
+                icon={Clock}
+                variant="secondary"
+                trend={{ value: "Manage Availability", isPositive: true }}
               />
             </div>
           </div>
@@ -657,21 +676,72 @@ const DoctorDashboard = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-[#14213D]">
-                      Today's Consultation Schedule
+                      Consultation Schedule
                     </h3>
                     <p className="text-xs text-slate-400 font-semibold">
-                      {appointments.length} appointment(s) registered for today
+                      {filteredAppointments.length} appointment(s) on selected date
                     </p>
                   </div>
                 </div>
 
+                {/* Date Navigator Controls */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-[14px] p-1 shadow-xs">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const prev = new Date(selectedDate);
+                        prev.setDate(prev.getDate() - 1);
+                        setSelectedDate(prev);
+                      }}
+                      className="h-7 w-7 rounded-[10px]"
+                      title="Previous Day"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5 text-slate-600" />
+                    </Button>
+                    <span className="text-xs font-bold text-[#14213D] px-2 flex items-center gap-1">
+                      <Calendar className="h-3 w-3 text-[#35B7C9]" />
+                      {selectedDate.toLocaleDateString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const next = new Date(selectedDate);
+                        next.setDate(next.getDate() + 1);
+                        setSelectedDate(next);
+                      }}
+                      className="h-7 w-7 rounded-[10px]"
+                      title="Next Day"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
+                    </Button>
+                  </div>
+
+                  {selectedDate.toDateString() !== new Date().toDateString() && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedDate(new Date())}
+                      className="h-8 text-xs font-bold text-[#F2052C] hover:bg-rose-50 px-2.5 rounded-[10px]"
+                    >
+                      Today
+                    </Button>
+                  )}
+                </div>
+
                 {/* Filter Tabs */}
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-[14px] text-xs font-bold text-slate-500">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-[14px] text-xs font-bold text-slate-500 overflow-x-auto">
                   {(["All", "Upcoming", "In Progress", "Completed", "Expired"] as const).map((filter) => (
                     <button
                       key={filter}
                       onClick={() => setSelectedFilter(filter)}
-                      className={`px-3 py-1 rounded-[10px] transition-all ${
+                      className={`px-3 py-1 rounded-[10px] transition-all whitespace-nowrap ${
                         selectedFilter === filter
                           ? "bg-white text-[#14213D] shadow-sm font-extrabold"
                           : "hover:text-[#14213D]"
@@ -860,39 +930,6 @@ const DoctorDashboard = () => {
                   })}
                 </div>
               </div>
-
-              {/* Recent Prescriptions Summary */}
-              {prescriptions.length > 0 && (
-                <div className="bg-white/90 backdrop-blur-md rounded-[24px] border border-slate-200/80 shadow-sm p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <FileSignature className="h-3.5 w-3.5 text-emerald-600" /> Recent Prescriptions
-                    </h4>
-                    <button
-                      onClick={() => navigate("/dashboard/doctor/prescriptions")}
-                      className="text-[11px] font-bold text-[#F2052C] hover:underline"
-                    >
-                      View All
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    {prescriptions.slice(0, 3).map((rx) => (
-                      <div
-                        key={rx.id}
-                        onClick={() => navigate("/dashboard/doctor/prescriptions")}
-                        className="p-3 rounded-[14px] bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer border border-slate-100 flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="text-xs font-extrabold text-[#14213D]">{rx.patient}</div>
-                          <div className="text-[10px] text-slate-400 font-medium line-clamp-1">{rx.medication}</div>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400">{rx.date}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>

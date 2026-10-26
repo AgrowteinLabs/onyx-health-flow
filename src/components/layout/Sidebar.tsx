@@ -249,11 +249,6 @@ const NAV: Record<string, any[]> = {
         path: "/dashboard/doctor",
       },
       {
-        label: "My Profile",
-        icon: User,
-        path: "/dashboard/doctor/profile",
-      },
-      {
         label: "Schedule & Availability",
         icon: Calendar,
         path: "/dashboard/doctor/schedule",
@@ -268,7 +263,6 @@ const NAV: Record<string, any[]> = {
         icon: FileText,
         path: "/dashboard/doctor/prescriptions",
       },
-      
       {
         label: "Earnings & Payouts",
         icon: CreditCard,
@@ -294,8 +288,13 @@ const NAV: Record<string, any[]> = {
         icon: ShieldCheck,
         path: "/dashboard/doctor/onboarding",
       },
+      {
+        label: "My Profile",
+        icon: User,
+        path: "/dashboard/doctor/profile",
+      },
     ],
-};
+  };
 
 
 const Sidebar = () => {
