@@ -1,7 +1,7 @@
 # ONYX HEALTH+ DOCTOR SYSTEM: BACKEND HANDOVER SPECIFICATION
 ## Comprehensive API Contracts, Data Schemas, Status Lifecycles & Telehealth Architecture
 
-**Document Version:** 2.0.0  
+**Document Version:** 2.1.0  
 **Target Systems:** Node.js / Express / NestJS / MongoDB / PostgreSQL Backend Services  
 **Consumer Applications:** 
 - Onyx Doctor Portal (`onyx-health-flow`)
@@ -10,33 +10,40 @@
 
 ---
 
-## 1. EXECUTIVE SUMMARY & ARCHITECTURE OVERVIEW
+## 1. EXECUTIVE SUMMARY & ECOSYSTEM ARCHITECTURE
 
 The **Onyx Health+ Doctor System** is a unified clinical telemedicine workspace enabling licensed physicians to manage schedules, conduct high-definition Agora RTC video consultations, review patient health reports, and issue digital prescriptions.
 
 ```mermaid
 graph TD
-    DoctorPortal[Onyx Doctor Portal] -->|HTTPS / REST API| BackendAPI[Onyx Backend Gateway]
-    PatientPortal[Onyx Patient Portal] -->|HTTPS / REST API| BackendAPI
-    KioskStation[Onyx IoT Health Kiosk] -->|Biometrics / Vitals| BackendAPI
-    BackendAPI -->|Token Issuance| AgoraRTC[Agora RTC Video Engine]
-    BackendAPI -->|Document Vault| S3Vault[Encrypted Health Vault / S3]
-    BackendAPI -->|State & Transactions| Database[(MongoDB / PostgreSQL)]
+    DoctorPortal[Onyx Doctor Portal] -->|HTTPS / REST API| BackendGateway[Onyx Backend Gateway]
+    PatientPortal[Onyx Patient Portal] -->|HTTPS / REST API| BackendGateway
+    KioskStation[Onyx IoT Health Kiosk] -->|Biometrics / Vitals| BackendGateway
+    DoctorPortal <-->|WSS Presence & Live Ringing| WebSocketServer[WebSocket Presence Server /ws/presence]
+    BackendGateway -->|Token Generator| AgoraRTC[Agora RTC Video Engine]
+    BackendGateway -->|Document Vault / Pre-signed URLs| S3Vault[AWS S3 Encrypted Medical Vault]
+    BackendGateway -->|Split Payouts & Transfers| RazorpayRoute[Razorpay Route Linked Accounts]
+    BackendGateway -->|State & Records| Database[(MongoDB / PostgreSQL)]
 ```
 
-### Key Functional Requirements Addressed in this Handover
-1. **Doctor Availability & Shift Hours:** API to persist and retrieve doctor weekly working shifts, slot intervals, and buffer durations.
-2. **Direct Doctor Slot Booking:** Allow doctors to directly schedule appointments for patients from the calendar.
-3. **Standardized Appointment Statuses:** Strict 5-state lifecycle (`Confirmed`, `Urgent`, `Pending`, `Completed`, `Expired`).
-4. **Consultation Lifecycle Workflow:** Dedicated endpoints for **Admit**, **Reject**, and **Postpone** consultations with real-time patient notifications.
-5. **Patient Health Reports:** Ingestion and retrieval of diagnostic reports uploaded by patients during booking and real-time viewing during video calls.
-6. **Agora RTC Encrypted Telehealth:** Production-ready token generation with integer UIDs for dual-portal audio/video calls.
+### Key Functional Requirements & Backend Gaps Addressed
+1. **Doctor Availability & Shift Hours:** Persist and retrieve doctor weekly recurring shifts, slot intervals (15m, 20m, 30m, 45m), and buffer durations.
+2. **Direct Doctor Slot Booking:** Allow doctors to directly schedule appointments for patients from the calendar without payment gateway dependency.
+3. **Standardized 5-State Appointment Lifecycle:** Strict status enforcement (`Confirmed`, `Urgent`, `Pending`, `Completed`, `Expired`).
+4. **Consultation Queue Actions:** Dedicated endpoints for **Admit**, **Reject**, and **Postpone** consultations with real-time patient notifications.
+5. **Patient Health Reports:** Ingestion, storage, and retrieval of diagnostic reports uploaded by patients during booking and in-call viewing.
+6. **Real-Time WebSocket Presence & Incoming Call Signaling (`/ws/presence`):** Instant incoming consultation alerts with audible ringtone triggering.
+7. **Agora RTC Token Issuance:** Clean numeric UID partitioning (`200000+` for doctors, `100000+` for patients).
+8. **Razorpay Route Doctor Settlements:** 15% platform commission deduction, 85% net doctor payout, 24h escrow hold, and dispute handling.
+9. **Doctor 4-Step Onboarding & Document Verification:** AWS S3 pre-signed URLs, credential verification, and admin approval workflows.
+10. **ABDM / NMC Audit Logging:** Immutable compliance logging when doctor accesses decrypted patient records.
+11. **Date-Filtered Querying:** High-performance index querying by doctor ID, date string (`YYYY-MM-DD`), and status.
 
 ---
 
-## 2. APPOINTMENT STATUS LIFECYCLE & STATE MACHINE
+## 2. STANDARDIZED APPOINTMENT STATUS LIFECYCLE
 
-All appointments throughout the Onyx ecosystem adhere to the following 5 canonical statuses:
+All appointments throughout the Onyx ecosystem adhere to the following 5 canonical statuses and transitional states:
 
 ```mermaid
 stateDiagram-v2
@@ -65,10 +72,13 @@ stateDiagram-v2
 | `Pending` | Pre-booked slot awaiting patient check-in or clinical verification. | Amber (`#F59E0B`) |
 | `Completed` | Consultation concluded, clinical notes signed, and digital prescription issued. | Vital Emerald (`#10B981`) |
 | `Expired` | Scheduled slot window has passed without attendance. Archived from active queue. | Slate Grey (`#94A3B8`) |
+| `Postponed` | Delayed by doctor (e.g. +15m, +30m). Patient notified of revised slot time. | Amber Outline |
+| `Cancelled` | Declined or cancelled with recorded clinical rationale. | Rose Outline |
+| `In Progress` | Active live Agora video encounter. | Emerald Pulsing |
 
 ---
 
-## 3. DOCTOR AVAILABILITY & WORKING HOURS API
+## 3. DOCTOR AVAILABILITY & SHIFT WORKING HOURS API
 
 Doctors configure their recurring consultation availability, slot durations (15m, 20m, 30m, 45m), and buffer times. The backend must persist these records and use them to generate patient-facing booking slots.
 
@@ -183,7 +193,7 @@ Doctors configure their recurring consultation availability, slot durations (15m
 
 ---
 
-## 4. DIRECT DOCTOR BOOKING API
+## 4. DIRECT DOCTOR APPOINTMENT BOOKING API
 
 Doctors have the clinical authority to directly schedule appointment slots for walk-in patients or scheduled follow-ups.
 
@@ -278,7 +288,7 @@ When a patient books an appointment, any diagnostic reports uploaded or selected
 
 ### 6.1 Get Booking Reports
 - **Method:** `GET`
-- **Route:** `/api/booking/:bookingId/reports`
+- **Route:** `/api/booking/:bookingId/reports` (or `/api/booking/shared-reports/:bookingId`)
 - **Auth:** Bearer JWT (Doctor / Patient)
 
 #### Response (`200 OK`)
@@ -351,12 +361,153 @@ High-definition, end-to-end encrypted video consultations require an Agora RTC t
 
 ---
 
-## 8. DIGITAL PRESCRIPTIONS & POST-CALL SIGNING
+## 8. REAL-TIME WEBSOCKET PRESENCE & INCOMING CALL SIGNALING
+
+The doctor dashboard maintains a persistent WebSocket connection to `/ws/presence` to listen for instant consultation calls, patient check-ins, and session terminations.
+
+### 8.1 Connection & Handshake
+- **Protocol:** `WSS`
+- **URL:** `wss://<api-domain>/ws/presence`
+
+#### Client Handshake Message
+```json
+{
+  "type": "identify",
+  "role": "doctor",
+  "userId": "doc_6711a9f029"
+}
+```
+
+### 8.2 Server-to-Doctor Events
+
+#### 8.2.1 Incoming Consultation Alert (`consultation:incoming`)
+Triggers the full-screen audible ringtone modal on the doctor portal.
+```json
+{
+  "type": "consultation:incoming",
+  "bookingId": "bk_88921a44",
+  "patientName": "Sunita Patel",
+  "reason": "Sudden Palpitations & Dizziness",
+  "slot": "Immediate",
+  "vitals": {
+    "bp": "142/90",
+    "pulse": 104,
+    "temp": "98.6°F",
+    "spo2": "97%"
+  }
+}
+```
+
+#### 8.2.2 Consultation Ended (`consultation:ended`)
+Dismisses the ringing modal and stops the ringtone if patient disconnects before admission.
+```json
+{
+  "type": "consultation:ended",
+  "bookingId": "bk_88921a44"
+}
+```
+
+#### 8.2.3 Heartbeat Ping-Pong
+```json
+// Client -> Server
+{ "type": "ping" }
+
+// Server -> Client
+{ "type": "pong" }
+```
+
+---
+
+## 9. RAZORPAY ROUTE SETTLEMENT & DOCTOR PAYOUT ARCHITECTURE
+
+Doctor earnings on Onyx Health+ operate on an automated split-payment model:
+
+$$\text{Gross Consultation Fee} - \text{Platform Commission (15\%)} = \text{Net Doctor Payout (85\%)}$$
+
+### 9.1 Linked Account Routes
+- `POST /create/linked-accounts`: Register doctor Razorpay Route sub-account.
+- `GET /list/linked-accounts`: Return doctor linked account status, KYC verification, and connected bank/UPI.
+- `PUT /update/linked-accounts/:id/bank`: Update destination bank account or UPI VPA.
+
+### 9.2 Payout Settlement Lifecycle & Escrow
+```mermaid
+graph LR
+    PaymentReceived[Patient Pays Fee] --> SplitTransfer[Razorpay Route 15% Onyx / 85% Doctor]
+    SplitTransfer --> Escrow24h[24h Escrow Hold]
+    Escrow24h --> AutoSettlement[Auto-Settled to Doctor Bank/UPI]
+    Escrow24h -.->|Dispute Opened| DisputeHold[Payout On Hold Pending Ticket]
+```
+
+#### Payout Ledger Entry Schema
+```typescript
+interface SettlementLedgerEntry {
+  bookingId: string;
+  grossAmount: number;         // e.g. 500 INR
+  commissionRate: number;      // 0.15 (15%)
+  commissionAmount: number;    // 75 INR
+  netPayout: number;           // 425 INR
+  status: "Settled" | "Pending 24h Escrow" | "On Hold";
+  razorpayTransferId: string;
+  utrNumber?: string;
+  escrowReleaseTime: Date;
+}
+```
+
+---
+
+## 10. DOCTOR 4-STEP ONBOARDING & VERIFICATION API
+
+Doctors must complete a 4-step clinical onboarding wizard before public consultation listing:
+
+| Step | Endpoint | Data Collected |
+| :--- | :--- | :--- |
+| Step 1 | `POST /api/doctor/onboarding/step1` | Medical specialty, experience years, qualifications, bio summary |
+| Step 2 | `POST /api/doctor/onboarding/step2` | Hospital affiliation, clinic street address, city, state, postal code |
+| Step 3 | `POST /api/doctor/onboarding/step3` | Medical Council registration number, issuing state board, license expiry |
+| Step 4 | `POST /api/doctor/onboarding/step4` | Consultation fee (INR), shift hours, working days |
+| Status | `GET /api/doctor/onboarding/status` | Returns `{ onboardingStatus: "pending" | "submitted" | "approved" | "rejected" }` |
+| S3 URL | `POST /api/doctor/documents/presigned-url` | Issues AWS S3 pre-signed upload URL for medical degree and license scan |
+| Admin | `POST /api/doctor/admin/approve` | Exec Admin approval or rejection with reason |
+
+---
+
+## 11. ABDM / NMC CONSENT & AUDIT LOGGING
+
+Under National Medical Commission (NMC) and Ayushman Bharat Digital Mission (ABDM) guidelines, a doctor must declare clinical intent before decrypting patient health history:
+
+- **Method:** `POST`
+- **Route:** `/api/booking/agree-report-access/:bookingId`
+- **Auth:** Bearer JWT (Doctor)
+
+#### Request Payload
+```json
+{
+  "agreed": true,
+  "declaration": "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential."
+}
+```
+
+#### Backend Action
+Stores an immutable audit record in `ComplianceAuditLog`:
+```typescript
+{
+  doctorId: "doc_6711a9f029",
+  patientId: "pat_990141",
+  bookingId: "bk_88921a44",
+  timestamp: new Date(),
+  ipAddress: req.ip,
+  declarationAgreed: true
+}
+```
+
+---
+
+## 12. DIGITAL PRESCRIPTIONS (e-Rx) & POST-CALL SIGNING
 
 When a doctor concludes a video consultation, the clinical diagnosis and prescribed medications are signed and stored.
 
 - **Method:** `POST`
-- **Route:** `/api/prescriptions`
+- **Route:** `/api/prescription`
 - **Auth:** Bearer JWT (Doctor)
 
 #### Request Payload
@@ -399,9 +550,27 @@ When a doctor concludes a video consultation, the clinical diagnosis and prescri
 
 ---
 
-## 9. RECOMMENDED DATABASE SCHEMAS (MONGODB / MONGOOSE)
+## 13. DATE-FILTERED QUERYING FOR BOOKING LIST API
 
-### 9.1 `DoctorAvailability` Schema
+To support the Dashboard and Schedule date navigators efficiently, enhance `GET /api/booking/list`:
+
+- **Route:** `GET /api/booking/list`
+- **Supported Query Parameters:**
+  - `date`: Filter by exact date (`YYYY-MM-DD`).
+  - `rangeStart` & `rangeEnd`: Filter by date range (e.g. for week view: `2026-10-25` to `2026-10-31`).
+  - `status`: Filter by comma-separated statuses (`Confirmed,Urgent,Pending`).
+  - `doctorId`: Doctor identifier (defaults to authenticated doctor).
+
+#### Example
+```
+GET /api/booking/list?doctorId=doc_6711a9f029&date=2026-10-26&status=Confirmed,Urgent
+```
+
+---
+
+## 14. RECOMMENDED DATABASE SCHEMAS (MONGODB / MONGOOSE)
+
+### 14.1 `DoctorAvailability` Schema
 ```typescript
 const ShiftIntervalSchema = new mongoose.Schema({
   start: { type: String, required: true }, // "09:00"
@@ -422,9 +591,11 @@ const DoctorAvailabilitySchema = new mongoose.Schema({
   bufferDuration: { type: Number, default: 5 }, // Minutes
   weeklySchedule: [DayAvailabilitySchema],
 }, { timestamps: true });
+
+DoctorAvailabilitySchema.index({ doctorId: 1 });
 ```
 
-### 9.2 `Booking` Schema Additions
+### 14.2 `Booking` Schema Additions
 ```typescript
 const BookingSchema = new mongoose.Schema({
   doctorId: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor", required: true },
@@ -442,6 +613,7 @@ const BookingSchema = new mongoose.Schema({
   },
   postponeMinutes: { type: Number, default: 0 },
   cancellationReason: { type: String },
+  cancellationNotes: { type: String },
   reports: [{ type: mongoose.Schema.Types.ObjectId, ref: "Report" }],
   vitals: {
     bp: { type: String },
@@ -449,17 +621,21 @@ const BookingSchema = new mongoose.Schema({
     pulse: { type: Number },
     spo2: { type: String },
   },
+  agoraChannel: { type: String },
+  paymentSettlementId: { type: String },
 }, { timestamps: true });
+
+BookingSchema.index({ doctorId: 1, slotDate: 1, status: 1 });
 ```
 
 ---
 
-## 10. RECONCILIATION WORKER (CRON) FOR EXPIRED APPOINTMENTS
+## 15. RECONCILIATION WORKER (CRON) FOR EXPIRED APPOINTMENTS
 
 To ensure calendar and dashboard precision, implement a recurring 5-minute background job:
 
 ```javascript
-// Schedule: Every 5 minutes
+// Schedule: Every 5 minutes (cron: '*/5 * * * *')
 async function reconcileExpiredBookings() {
   const cutoffTime = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours past scheduled time
   
@@ -477,13 +653,15 @@ async function reconcileExpiredBookings() {
 
 ---
 
-## 11. VERIFICATION CHECKLIST FOR BACKEND INTEGRATION
+## 16. VERIFICATION CHECKLIST FOR BACKEND INTEGRATION
 
-- [ ] `POST /api/doctor/availability` persists weekly shift matrices.
-- [ ] `GET /api/doctor/availability` returns configured intervals.
+- [ ] `POST /api/doctor/availability` persists weekly shift matrices and slot intervals.
+- [ ] `GET /api/doctor/availability` returns doctor's configured shifts.
 - [ ] `POST /api/booking/doctor-create` allows direct doctor slot bookings.
 - [ ] `POST /api/booking/status` handles Admit, Postpone, and Reject actions.
 - [ ] `GET /api/booking/:id/reports` serves patient health records with verified URLs.
+- [ ] `POST /api/booking/agree-report-access/:id` logs NMC compliance audit entries.
 - [ ] `GET /api/video/token/:bookingId` issues valid Agora RTC tokens with integer UIDs.
-- [ ] Appointment statuses strictly enforce `Confirmed`, `Urgent`, `Pending`, `Completed`, `Expired`.
+- [ ] WebSocket presence server `/ws/presence` emits `consultation:incoming` and `consultation:ended`.
+- [ ] Razorpay Route linked account creation and automated 15%/85% payout splitting.
 - [ ] Background worker archives unattended bookings as `Expired`.
