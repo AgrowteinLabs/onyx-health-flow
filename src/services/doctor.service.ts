@@ -61,9 +61,10 @@ export const createPrescription = async (payload: any) => {
   });
 };
 
-export const getPrescription = async (bookingId: string) => {
+export const getPrescription = async (bookingId: string, options: { silent?: boolean } = { silent: true }) => {
   return apiRequest(`/api/prescription/${bookingId}`, {
     method: "GET",
+    silent: options.silent !== false,
   });
 };
 

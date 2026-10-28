@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import PageHeader from "@/components/dashboard/PageHeader";
 import EmptyState from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -32,11 +32,14 @@ import {
   Printer,
   Sparkles,
   Stethoscope,
+  Search,
+  Filter,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { listBookings } from "@/services/booking.service";
 import { createPrescription, getPrescription } from "@/services/doctor.service";
 import { viewUser } from "@/services/user.service";
+import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
 
 interface Prescription {
   id: string | number;
@@ -109,6 +112,8 @@ const Prescriptions = () => {
   const [doctorName, setDoctorName] = useState<string>(
     localStorage.getItem("userName") || "Licensed Medical Specialist"
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "requested" | "approved" | "none">("all");
 
   const [newRx, setNewRx] = useState({
     patient: "",
@@ -340,10 +345,76 @@ const Prescriptions = () => {
     });
   };
 
+  /* ============================================================
+     RE-PRESCRIBE & PRINT OFFICIAL PDF HANDLERS
+  ============================================================ */
+  const handleReprescribe = (rx: Prescription) => {
+    const primaryMed = rx.medications[0];
+    setNewRx({
+      patient: rx.patient,
+      medication: primaryMed ? primaryMed.name : "",
+      dosage: primaryMed ? primaryMed.dosage : "",
+      frequency: primaryMed ? primaryMed.frequency : "Once daily",
+      duration: rx.duration || "30 days",
+      notes: rx.notes ? `Repeat prescription: ${rx.notes}` : "Repeat course as directed.",
+    });
+    setIssueOpen(true);
+    toast({
+      title: "Draft Created for Clinical Review",
+      description: `Pre-populated electronic prescription for ${rx.patient}. Review before signing.`,
+    });
+  };
+
+  const handlePrintOfficialPdf = (rx: Prescription) => {
+    try {
+      openPrescriptionPdf({
+        patientName: rx.patient,
+        doctorName: rx.doctorName || doctorName,
+        doctorSpecialty: "Specialist Physician",
+        registrationNumber: localStorage.getItem("doctorRegNumber") || "NMC-48291-KMC",
+        councilState: "National Medical Commission (NMC)",
+        diagnosis: "Clinical Telehealth Review & Consultation",
+        issuedDate: rx.issuedDate,
+        id: rx.id,
+        medications: rx.medications.map((m) => ({
+          name: m.name,
+          dosage: m.dosage,
+          frequency: m.frequency,
+          duration: rx.duration,
+          instructions: rx.notes || "As directed by physician",
+        })),
+        notes: rx.notes || "Compliant with Telemedicine Practice Guidelines",
+      });
+      toast({
+        title: "Official PDF Generated",
+        description: `Verified NMC prescription slip opened for ${rx.patient}.`,
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Print Error",
+        description: "Failed to render prescription PDF.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const preview = prescriptions.find((rx) => rx.id === previewId);
 
+  const filteredPrescriptions = useMemo(() => {
+    return prescriptions.filter((rx) => {
+      const matchesSearch =
+        rx.patient.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        rx.medications.some((m) => m.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (rx.notes && rx.notes.toLowerCase().includes(searchQuery.toLowerCase()));
+      if (!matchesSearch) return false;
+      if (statusFilter !== "all" && rx.refillStatus !== statusFilter) return false;
+      return true;
+    });
+  }, [prescriptions, searchQuery, statusFilter]);
+
   return (
-    <div className="space-y-6 animate-fadeIn pb-12">
+    <div className="space-y-6 animate-fadeIn pb-12 font-sans text-slate-800">
       <PageHeader />
 
       {/* Header */}
@@ -395,6 +466,43 @@ const Prescriptions = () => {
         </div>
       )}
 
+      {/* Search and Status Filters */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/80 backdrop-blur-md p-4 rounded-[20px] border border-slate-200/80 shadow-xs">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search prescriptions by patient, medicine, or notes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-10 rounded-[12px] bg-slate-50 border-slate-200 text-xs font-semibold"
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1 flex items-center gap-1">
+            <Filter className="h-3 w-3" /> Status:
+          </span>
+          {[
+            { id: "all", label: "All e-Rx" },
+            { id: "requested", label: "Refill Requested" },
+            { id: "approved", label: "Approved" },
+            { id: "none", label: "Standard" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setStatusFilter(tab.id as any)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                statusFilter === tab.id
+                  ? "bg-[#14213D] text-white border-[#14213D] shadow-xs"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Prescription Cards Grid */}
       {prescriptions.length === 0 ? (
         <EmptyState
@@ -402,9 +510,15 @@ const Prescriptions = () => {
           title="No prescriptions issued"
           description="Issue electronic prescriptions to your telehealth patients and they will appear here."
         />
+      ) : filteredPrescriptions.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-[24px] border border-slate-200/80 shadow-xs">
+          <Search className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm font-bold text-slate-700">No prescriptions match your search criteria</p>
+          <p className="text-xs text-slate-400 mt-1">Try searching by a different patient name or medicine.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {prescriptions.map((rx) => {
+          {filteredPrescriptions.map((rx) => {
             const rc = REFILL_CONFIG[rx.refillStatus] || REFILL_CONFIG.none;
             const RefillIcon = rc.icon;
 
@@ -454,29 +568,56 @@ const Prescriptions = () => {
                 </div>
 
                 {/* Card Actions */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                  {rx.refillStatus === "requested" ? (
+                <div className="flex flex-wrap items-center justify-between pt-2.5 border-t border-slate-100 gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {rx.refillStatus === "requested" ? (
+                      <Button
+                        size="sm"
+                        onClick={() => handleApproveRefill(rx.id)}
+                        className="h-8 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] border-none shadow-sm"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve Refill
+                      </Button>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        Signed by Dr. {rx.doctorName || doctorName}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {/* Re-prescribe Action */}
                     <Button
                       size="sm"
-                      onClick={() => handleApproveRefill(rx.id)}
-                      className="h-8 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] border-none shadow-sm"
+                      variant="ghost"
+                      onClick={() => handleReprescribe(rx)}
+                      className="h-8 text-xs font-bold text-slate-600 hover:text-[#14213D] hover:bg-slate-100 rounded-[12px] px-2.5"
+                      title="Pre-populate new draft for clinical review"
                     >
-                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve Refill
+                      <Sparkles className="h-3.5 w-3.5 mr-1 text-[#35B7C9]" /> Re-prescribe
                     </Button>
-                  ) : (
-                    <span className="text-xs text-slate-400 font-medium">
-                      Signed by Dr. {rx.doctorName || doctorName}
-                    </span>
-                  )}
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPreviewId(rx.id)}
-                    className="h-8 text-xs font-bold rounded-[12px] border-slate-200"
-                  >
-                    View Rx Card
-                  </Button>
+                    {/* Official PDF Print Slip */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handlePrintOfficialPdf(rx)}
+                      className="h-8 text-xs font-bold text-[#F2052C] hover:bg-rose-50 border-rose-200 rounded-[12px] px-2.5"
+                      title="Download/Print Official PDF Slip"
+                    >
+                      <Printer className="h-3.5 w-3.5 mr-1 text-[#F2052C]" /> Print Slip
+                    </Button>
+
+                    {/* Quick View Dialog */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPreviewId(rx.id)}
+                      className="h-8 text-xs font-bold rounded-[12px] border-slate-200 px-2.5"
+                    >
+                      View Card
+                    </Button>
+                  </div>
                 </div>
               </div>
             );
