@@ -289,15 +289,25 @@ const DoctorDashboard = () => {
           b.patientName ||
           `Patient #${b._id?.slice(-4) || idx + 1}`;
 
+        const rawStatus = (b.status || "").toLowerCase();
         let statusStr: AppointmentItem["status"] = "Upcoming";
-        if (b.status === "In Progress" || b.status === "in-progress" || b.status === "active") {
+        if (
+          rawStatus === "in_consultation" ||
+          rawStatus === "in-progress" ||
+          rawStatus === "in progress" ||
+          rawStatus === "active"
+        ) {
           statusStr = "In Progress";
-        } else if (b.status === "Completed" || b.status === "completed") {
+        } else if (rawStatus === "completed") {
           statusStr = "Completed";
-        } else if (b.status === "Cancelled" || b.status === "cancelled") {
+        } else if (rawStatus === "cancelled" || rawStatus === "rejected") {
           statusStr = "Cancelled";
-        } else if (b.status === "Urgent") {
+        } else if (rawStatus === "expired") {
+          statusStr = "Expired";
+        } else if (rawStatus === "urgent") {
           statusStr = "Urgent";
+        } else {
+          statusStr = "Upcoming";
         }
 
         let timeStr = "Today";
@@ -365,6 +375,18 @@ const DoctorDashboard = () => {
 
   useEffect(() => {
     fetchDashboardData();
+
+    const handleRefresh = () => {
+      fetchDashboardData();
+    };
+
+    window.addEventListener("onyx:refresh_dashboard", handleRefresh);
+    window.addEventListener("onyx:booking_status", handleRefresh);
+
+    return () => {
+      window.removeEventListener("onyx:refresh_dashboard", handleRefresh);
+      window.removeEventListener("onyx:booking_status", handleRefresh);
+    };
   }, [fetchDashboardData]);
 
   /* ============================================================

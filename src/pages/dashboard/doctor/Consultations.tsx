@@ -61,7 +61,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/api-request";
-import { listBookings } from "@/services/booking.service";
+import { listBookings, updateBookingStatus, getBookingReports } from "@/services/booking.service";
 import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
 import { listReports, listReportsByProfile } from "@/services/report.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
@@ -385,12 +385,16 @@ const Consultations: React.FC = () => {
           const rawStatus = (b.status || "").toLowerCase();
           if (rawStatus.includes("completed")) {
             qStatus = "Completed";
+          } else if (rawStatus === "in_consultation" || rawStatus.includes("consultation") || rawStatus.includes("progress")) {
+            qStatus = "In Consultation";
           } else if (rawStatus.includes("postponed")) {
             qStatus = "Postponed";
           } else if (rawStatus.includes("cancelled") || rawStatus.includes("rejected")) {
             qStatus = "Cancelled";
-          } else if (rawStatus.includes("progress") || rawStatus.includes("waiting") || rawStatus.includes("urgent") || b.type === "instant") {
+          } else if (rawStatus.includes("waiting") || rawStatus.includes("urgent") || b.type === "instant") {
             qStatus = "Waiting";
+          } else if (rawStatus.includes("confirmed")) {
+            qStatus = "Scheduled";
           }
 
           realPatients.push({
@@ -471,7 +475,16 @@ const Consultations: React.FC = () => {
   useEffect(() => {
     fetchConsultationsData();
 
+    const handleRefresh = () => {
+      fetchConsultationsData();
+    };
+
+    window.addEventListener("onyx:refresh_dashboard", handleRefresh);
+    window.addEventListener("onyx:booking_status", handleRefresh);
+
     return () => {
+      window.removeEventListener("onyx:refresh_dashboard", handleRefresh);
+      window.removeEventListener("onyx:booking_status", handleRefresh);
       if (localAudioRef.current) localAudioRef.current.close();
       if (localVideoRef.current) localVideoRef.current.close();
       if (clientRef.current) clientRef.current.leave();
@@ -504,6 +517,25 @@ const Consultations: React.FC = () => {
 
     setSharedReportsStatus("loading");
     try {
+      // 1. Check official booking reports endpoint
+      const bookingReportsRes = await getBookingReports(targetBookingId).catch(() => null);
+      if (bookingReportsRes && Array.isArray(bookingReportsRes.reports) && bookingReportsRes.reports.length > 0) {
+        const mapped: HealthReportItem[] = bookingReportsRes.reports.map((r: any, idx: number) => ({
+          id: r.id || r._id || `rep-${idx}`,
+          title: r.title || r.name || `Health Report #${idx + 1}`,
+          type: (r.type as any) || "Lab Report",
+          date: r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : r.date || "Recent",
+          fileUrl: r.fileUrl || r.url || "#",
+          fileSize: r.fileSize || "1.2 MB",
+          summary: r.summary || "Diagnostic health record attached to consultation booking.",
+          isVerified: true,
+        }));
+        setSharedReports(mapped);
+        setSharedReportsStatus("unlocked");
+        return;
+      }
+
+      // 2. ABDM declaration check / shared reports
       const res = await getSharedReports(targetBookingId);
       if (res?.declarationRequired) {
         setSharedReportsStatus("declaration_required");
@@ -562,7 +594,16 @@ const Consultations: React.FC = () => {
   ============================================================ */
 
   // 1. ADMIT PATIENT
-  const handleAdmitPatient = (targetPatient: PatientRecord) => {
+  const handleAdmitPatient = async (targetPatient: PatientRecord) => {
+    try {
+      const bId = targetPatient.bookingId || targetPatient.id;
+      if (bId) {
+        await updateBookingStatus({
+          bookingId: String(bId),
+          action: "admit",
+        }).catch((err) => console.warn("[Admit] Backend API note:", err));
+      }
+    } catch {}
     handleStartConsultation(targetPatient);
     toast({
       title: "Patient Admitted",
@@ -586,15 +627,12 @@ const Consultations: React.FC = () => {
 
     try {
       const bId = p.bookingId || p.id;
-      // Send backend status update
-      await apiRequest(`/api/booking/status`, {
-        method: "POST",
-        data: {
-          bookingId: bId,
-          status: "Postponed",
-          postponeMinutes: Number(postponeMinutes),
-          reason: postponeNote,
-        },
+      // Send backend status update with action: "postpone"
+      await updateBookingStatus({
+        bookingId: String(bId),
+        action: "postpone",
+        postponeMinutes: Number(postponeMinutes),
+        reason: postponeNote,
       }).catch(() => null);
 
       // Broadcast to patient portal
@@ -659,13 +697,11 @@ const Consultations: React.FC = () => {
 
     try {
       const bId = p.bookingId || p.id;
-      await apiRequest(`/api/booking/status`, {
-        method: "POST",
-        data: {
-          bookingId: bId,
-          status: "Cancelled",
-          reason: `${rejectReason}: ${rejectNote}`,
-        },
+      await updateBookingStatus({
+        bookingId: String(bId),
+        action: "reject",
+        reason: rejectReason,
+        notes: rejectNote,
       }).catch(() => null);
 
       // Broadcast to patient portal
@@ -713,7 +749,13 @@ const Consultations: React.FC = () => {
   /* ============================================================
      AGORA RTC CALL ENGINE
   ============================================================ */
-  const startAgoraCall = async (appId: string, channelName: string, token: string, userUid?: number | string | null) => {
+  const startAgoraCall = async (
+    appId: string,
+    channelName: string,
+    token: string,
+    userUid?: number | string | null,
+    bookingId?: string
+  ) => {
     try {
       setIsRealCall(true);
       setRemoteUserConnected(false);
@@ -766,6 +808,23 @@ const Consultations: React.FC = () => {
         setRemoteUserConnected(false);
         setRemoteVideoTrackActive(false);
         toast({ title: "Patient left the room" });
+      });
+
+      // Agora RTC token renewal listener (expiresIn: 3600s)
+      client.on("token-privilege-will-expire", async () => {
+        try {
+          const bId = bookingId || channelName.replace(/^room-/, "");
+          console.log("[Agora RTC] Token privilege expiring, renewing for booking:", bId);
+          if (bId) {
+            const tokenRes: any = await apiRequest(`/api/video/token/${bId}`, { method: "GET" }).catch(() => null);
+            if (tokenRes?.token) {
+              await client.renewToken(tokenRes.token);
+              console.log("[Agora RTC] Token renewed successfully");
+            }
+          }
+        } catch (renewErr) {
+          console.warn("[Agora RTC] Failed to renew token:", renewErr);
+        }
       });
 
       const rtcToken = token && !token.toLowerCase().includes("mock") && token.length > 30 ? token : null;
@@ -876,7 +935,7 @@ const Consultations: React.FC = () => {
 
       const isRealAgora = appId && !appId.startsWith("mock") && appId.length >= 10;
       if (isRealAgora) {
-        startAgoraCall(appId, channelName, token, backendUid);
+        startAgoraCall(appId, channelName, token, backendUid, targetBookingId);
       } else {
         startSimulatedCall();
       }

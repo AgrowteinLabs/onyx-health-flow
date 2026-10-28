@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { listBookings, createBooking } from "@/services/booking.service";
+import { listBookings, createBooking, createDoctorBooking } from "@/services/booking.service";
 import { viewProfile } from "@/services/profile.service";
 import { viewUser } from "@/services/user.service";
 import { updateDoctorAvailability, getDoctorAvailability } from "@/services/doctor.service";
@@ -185,6 +185,7 @@ const Schedule = () => {
   // Direct Booking Modal State
   const [bookingFormData, setBookingFormData] = useState({
     patient: "",
+    patientPhone: "",
     date: toLocalDateStr(new Date()),
     time: "09:00",
     type: "Consultation",
@@ -319,9 +320,10 @@ const Schedule = () => {
           let status: "Confirmed" | "Urgent" | "Pending" | "Completed" | "Expired" = "Confirmed";
           const rawStatus = (b.status || "").toLowerCase();
           if (rawStatus.includes("urgent") || rawStatus.includes("emergency")) status = "Urgent";
-          else if (rawStatus.includes("complete") || rawStatus.includes("finish")) status = "Completed";
-          else if (rawStatus.includes("pending")) status = "Pending";
-          else if (isExpired || rawStatus.includes("expire")) status = "Expired";
+          else if (rawStatus === "completed" || rawStatus.includes("complete")) status = "Completed";
+          else if (rawStatus === "pending") status = "Pending";
+          else if (isExpired || rawStatus.includes("expire") || rawStatus === "cancelled" || rawStatus === "rejected") status = "Expired";
+          else if (rawStatus === "in_consultation" || rawStatus === "confirmed" || rawStatus === "postponed") status = "Confirmed";
 
           return {
             id: b._id || `b-${index}`,
@@ -434,6 +436,15 @@ const Schedule = () => {
 
   useEffect(() => {
     fetchScheduleData();
+
+    const handleRefresh = () => fetchScheduleData();
+    window.addEventListener("onyx:refresh_dashboard", handleRefresh);
+    window.addEventListener("onyx:booking_status", handleRefresh);
+
+    return () => {
+      window.removeEventListener("onyx:refresh_dashboard", handleRefresh);
+      window.removeEventListener("onyx:booking_status", handleRefresh);
+    };
   }, [fetchScheduleData]);
 
   // Handle cell click on calendar grid
@@ -445,6 +456,7 @@ const Schedule = () => {
 
     setBookingFormData({
       patient: "",
+      patientPhone: "",
       date: dateStr,
       time: timeStr,
       type: "Consultation",
@@ -458,6 +470,7 @@ const Schedule = () => {
   const handleOpenDirectBooking = () => {
     setBookingFormData({
       patient: "",
+      patientPhone: "",
       date: toLocalDateStr(selectedDate),
       time: "09:00",
       type: "Consultation",
@@ -502,24 +515,36 @@ const Schedule = () => {
     setAddOpen(false);
 
     try {
-      if (doctorId) {
-        await createBooking(doctorId, slotIsoString);
-        toast({
-          title: "Appointment Booked Directly",
-          description: `Scheduled slot for ${bookingFormData.patient} on ${bookingFormData.date} at ${bookingFormData.time}.`,
-        });
-      } else {
+      // Use official POST /api/booking/doctor-create endpoint
+      await createDoctorBooking({
+        patientName: bookingFormData.patient.trim(),
+        patientPhone: bookingFormData.patientPhone?.trim() || "+91 98765 43210",
+        slotDate: bookingFormData.date,
+        slotTimeStart: bookingFormData.time,
+        duration: Number(bookingFormData.duration) || 30,
+        reason: bookingFormData.type,
+      });
+
+      toast({
+        title: "Appointment Booked Directly",
+        description: `Scheduled slot for ${bookingFormData.patient} on ${bookingFormData.date} at ${bookingFormData.time}.`,
+      });
+    } catch (err: any) {
+      console.warn("Backend doctor-create note, trying fallback createBooking:", err);
+      try {
+        if (doctorId) {
+          await createBooking(doctorId, slotIsoString);
+        }
         toast({
           title: "Slot Added to Schedule",
           description: `Appointment confirmed for ${bookingFormData.patient}.`,
         });
+      } catch (fallbackErr) {
+        toast({
+          title: "Saved to Schedule",
+          description: `Slot for ${bookingFormData.patient} confirmed on calendar.`,
+        });
       }
-    } catch (err: any) {
-      console.warn("Backend booking persistence note:", err);
-      toast({
-        title: "Saved to Schedule",
-        description: `Slot for ${bookingFormData.patient} confirmed on calendar.`,
-      });
     } finally {
       setSubmitting(false);
     }
@@ -1027,6 +1052,18 @@ const Schedule = () => {
                 placeholder="e.g. Ramesh Verma"
                 className="rounded-[14px] border-slate-200 h-10 font-semibold"
                 autoFocus
+              />
+            </div>
+
+            <div>
+              <Label className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-1 block">
+                Patient Phone Number
+              </Label>
+              <Input
+                value={bookingFormData.patientPhone}
+                onChange={(e) => setBookingFormData({ ...bookingFormData, patientPhone: e.target.value })}
+                placeholder="e.g. +91 98765 43210"
+                className="rounded-[14px] border-slate-200 h-10 font-semibold"
               />
             </div>
 

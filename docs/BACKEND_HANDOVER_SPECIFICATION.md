@@ -369,14 +369,17 @@ The doctor dashboard maintains a persistent WebSocket connection to `/ws/presenc
 - **Protocol:** `WSS`
 - **URL:** `wss://<api-domain>/ws/presence`
 
-#### Client Handshake Message
+#### Client Handshake Message (JWT Token Authenticated)
+> **Critical Backend Contract:** The WebSocket server validates the JWT bearer token sent in the `identify` frame. Unauthenticated sockets or invalid tokens are closed immediately with code `4401`. Clients automatically refresh their access token via `POST /api/auth/issue-token` upon receiving `4401` and reconnect.
+
 ```json
 {
   "type": "identify",
   "role": "doctor",
-  "userId": "doc_6711a9f029"
+  "token": "<doctorAccessToken>"
 }
 ```
+*(For patients: `{ "type": "identify", "role": "patient", "token": "<patientAccessToken>" }`)*
 
 ### 8.2 Server-to-Doctor Events
 
