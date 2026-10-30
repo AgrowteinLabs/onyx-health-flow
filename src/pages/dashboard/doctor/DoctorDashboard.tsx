@@ -324,7 +324,7 @@ const DoctorDashboard = () => {
         pendingConsultations: formattedAppointments.filter(
           (a) => a.status === "Upcoming" || a.status === "In Progress"
         ).length,
-        reportsToReview: reportList.length || 3,
+        reportsToReview: totalReportsCount || 0,
       }));
 
       // Cache Prescriptions
