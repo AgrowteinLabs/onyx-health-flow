@@ -570,14 +570,38 @@ const Consultations: React.FC = () => {
 
       setPatients(realPatients);
 
-      // Preserve or set selected patient
-      setSelected((prev) => {
-        if (prev) {
-          const match = realPatients.find((p) => p.id === prev.id || p.bookingId === prev.bookingId);
-          if (match) return match;
-        }
-        return realPatients.find((p) => p.status === "Waiting") || realPatients[0] || null;
-      });
+      // Smart initial queue tab and selected patient auto-focus:
+      const waitingPatients = realPatients.filter(
+        (p) => p.status === "Waiting" || p.status === "In Consultation"
+      );
+      const scheduledPatients = realPatients.filter(
+        (p) => p.status === "Scheduled" || p.status === "Postponed"
+      );
+      const completedPatients = realPatients.filter(
+        (p) => p.status === "Completed" || p.status === "Cancelled"
+      );
+
+      if (waitingPatients.length > 0) {
+        setQueueTab("Waiting");
+        setSelected((prev) => {
+          if (prev && waitingPatients.some((p) => p.id === prev.id)) return prev;
+          return waitingPatients[0];
+        });
+      } else if (scheduledPatients.length > 0) {
+        setQueueTab("Scheduled");
+        setSelected((prev) => {
+          if (prev && scheduledPatients.some((p) => p.id === prev.id)) return prev;
+          return scheduledPatients[0];
+        });
+      } else if (completedPatients.length > 0) {
+        setQueueTab("Completed");
+        setSelected((prev) => {
+          if (prev && completedPatients.some((p) => p.id === prev.id)) return prev;
+          return completedPatients[0];
+        });
+      } else {
+        setSelected(realPatients[0] || null);
+      }
     } catch (err) {
       console.warn("Could not retrieve consultations data:", err);
     } finally {
@@ -711,6 +735,22 @@ const Consultations: React.FC = () => {
       });
     } finally {
       setAgreeingDeclaration(false);
+    }
+  };
+
+  // Switch Queue Tab & synchronize active selection to the first patient of that queue
+  const handleSelectQueueTab = (tab: "Waiting" | "Scheduled" | "Completed") => {
+    setQueueTab(tab);
+    const tabPatients = patients.filter((p) => {
+      if (tab === "Waiting") return p.status === "Waiting" || p.status === "In Consultation";
+      if (tab === "Scheduled") return p.status === "Scheduled" || p.status === "Postponed";
+      if (tab === "Completed") return p.status === "Completed" || p.status === "Cancelled";
+      return false;
+    });
+    if (tabPatients.length > 0) {
+      if (!selected || !tabPatients.some((p) => p.id === selected.id)) {
+        setSelected(tabPatients[0]);
+      }
     }
   };
 
@@ -2256,26 +2296,26 @@ const Consultations: React.FC = () => {
         /* ============================================================
             PHASE 1: THE CLINICAL WAITING ROOM & INTAKE (DEFAULT)
         ============================================================ */
-        <div className="space-y-6 animate-fadeIn">
+        <div className="space-y-4 animate-fadeIn">
           {/* Top Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/90 backdrop-blur-md p-5 rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)]">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white/90 backdrop-blur-md px-5 py-3 rounded-[20px] border border-slate-200/80 shadow-xs">
             <div className="flex items-center gap-3">
-              <div className="h-11 w-11 rounded-[16px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold">
+              <div className="h-10 w-10 rounded-[14px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold shrink-0">
                 <Stethoscope className="h-5 w-5" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-[#14213D] tracking-tight">Telehealth Virtual Clinic</h1>
+                <h1 className="text-lg font-black text-[#14213D] tracking-tight">Telehealth Virtual Clinic</h1>
                 <p className="text-xs text-slate-400 font-medium">
                   Clinical Intake, Patient Shared Health Reports & Encrypted Agora HD Suite
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant="outline"
                 onClick={() => setPermissionsModalOpen(true)}
-                className="rounded-[14px] h-9 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs flex items-center gap-1.5"
+                className="rounded-[12px] h-8.5 px-3 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs flex items-center gap-1.5"
               >
                 <Camera className="h-3.5 w-3.5 text-[#35B7C9]" /> Device Check
               </Button>
@@ -2285,7 +2325,7 @@ const Consultations: React.FC = () => {
                 size="icon"
                 onClick={fetchConsultationsData}
                 disabled={loading}
-                className="rounded-[14px] h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
+                className="rounded-[12px] h-8.5 w-8.5 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
                 title="Refresh Intake Queue"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -2293,7 +2333,7 @@ const Consultations: React.FC = () => {
 
               <Button
                 onClick={() => setAddPatientOpen(true)}
-                className="rounded-[14px] h-9 px-4 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-xs flex items-center gap-1.5"
+                className="rounded-[12px] h-8.5 px-3.5 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-xs flex items-center gap-1.5"
               >
                 <UserPlus className="h-3.5 w-3.5" /> Quick Register Walk-In
               </Button>
@@ -2301,9 +2341,9 @@ const Consultations: React.FC = () => {
           </div>
 
           {/* Split Waiting Room Stage (Left: Queue | Right: Dossier & Reports) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Queue Panel (5 cols) */}
-            <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] p-4 space-y-3.5">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Left Queue Panel (5 cols on lg, 4 cols on xl) */}
+            <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-[22px] border border-slate-200/80 shadow-xs p-4 space-y-3.5">
               {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -2311,7 +2351,7 @@ const Consultations: React.FC = () => {
                   placeholder="Search patient, symptoms, phone..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 h-10 rounded-[14px] bg-slate-50 border-slate-200 text-xs font-medium"
+                  className="pl-10 h-9.5 rounded-[12px] bg-slate-50 border-slate-200 text-xs font-medium"
                 />
               </div>
 
@@ -2325,16 +2365,24 @@ const Consultations: React.FC = () => {
                     return false;
                   }).length;
 
+                  const isActive = queueTab === tab;
+
                   return (
                     <button
                       key={tab}
-                      onClick={() => setQueueTab(tab)}
+                      onClick={() => handleSelectQueueTab(tab)}
                       className={`flex-1 py-1.5 rounded-[11px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                        queueTab === tab ? "bg-white text-[#14213D] shadow-sm font-extrabold" : "hover:text-[#14213D]"
+                        isActive ? "bg-white text-[#14213D] shadow-sm font-extrabold" : "hover:text-[#14213D]"
                       }`}
                     >
                       <span>{tab}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/70 text-slate-600 font-mono">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono transition-colors ${
+                          isActive
+                            ? "bg-[#14213D] text-white"
+                            : "bg-slate-200/70 text-slate-600"
+                        }`}
+                      >
                         {count}
                       </span>
                     </button>
@@ -2463,24 +2511,24 @@ const Consultations: React.FC = () => {
             </div>
 
             {/* Right Dossier Panel (7 cols / 8 cols) */}
-            <div className="lg:col-span-7 xl:col-span-8 space-y-5">
+            <div className="lg:col-span-7 xl:col-span-8 space-y-4">
               {selected ? (
-                <div className="space-y-5 animate-fadeIn">
+                <div className="space-y-4 animate-fadeIn">
                   {/* Selected Patient Identity & Start Consultation Banner */}
-                  <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-6 text-white shadow-xl border border-white/10">
+                  <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-5 text-white shadow-xl border border-white/10">
                     <div className="absolute top-0 right-0 -mr-12 -mt-12 w-56 h-56 rounded-full bg-[#F2052C]/20 blur-3xl pointer-events-none" />
 
-                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                      <div className="flex items-start sm:items-center gap-4">
-                        <div className="h-16 w-16 rounded-[20px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
-                          <div className="h-full w-full rounded-[18px] bg-[#14213D] flex items-center justify-center font-black text-xl text-white">
+                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5">
+                        <div className="h-14 w-14 rounded-[18px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
+                          <div className="h-full w-full rounded-[16px] bg-[#14213D] flex items-center justify-center font-black text-lg text-white">
                             {selected.avatar}
                           </div>
                         </div>
 
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h2 className="text-xl sm:text-2xl font-black tracking-tight">{selected.name}</h2>
+                            <h2 className="text-xl font-black tracking-tight">{selected.name}</h2>
                             <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                               <ShieldCheck className="h-3 w-3 text-emerald-400" /> Patient Dossier Active
                             </Badge>
@@ -2497,234 +2545,273 @@ const Consultations: React.FC = () => {
                         <Button
                           variant="outline"
                           onClick={() => handleOpenPostpone(selected)}
-                          className="rounded-[14px] h-10 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
+                          className="rounded-[12px] h-9 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
                         >
-                          <CalendarClock className="h-4 w-4 text-amber-300" /> Postpone
+                          <CalendarClock className="h-3.5 w-3.5 text-amber-300" /> Postpone
                         </Button>
 
                         <Button
                           variant="outline"
                           onClick={() => handleOpenReject(selected)}
-                          className="rounded-[14px] h-10 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
+                          className="rounded-[12px] h-9 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
                         >
-                          <Ban className="h-4 w-4 text-rose-400" /> Reject
+                          <Ban className="h-3.5 w-3.5 text-rose-400" /> Reject
                         </Button>
 
                         <Button
                           onClick={() => handleAdmitPatient(selected)}
-                          className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[14px] h-10 px-5 border-none shadow-xl shadow-[#F2052C]/30 text-xs flex items-center gap-2 transform active:scale-95 transition-all"
+                          className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[12px] h-9 px-4.5 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-1.5 transform active:scale-95 transition-all"
                         >
-                          <Video className="h-4.5 w-4.5" /> Admit to Video Room
+                          <Video className="h-4 w-4" /> Admit to Video Room
                         </Button>
                       </div>
                     </div>
                   </div>
 
-                  {/* Kiosk Telemetry Cards */}
-                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <Activity className="h-4.5 w-4.5 text-[#F2052C]" /> Real-Time Kiosk IoT Telemetry
-                      </h3>
-                      {selected.vitals.hasRealKioskData ? (
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                          Hardware Live Synced
-                        </Badge>
-                      ) : (
-                        <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-medium">
-                          Remote Telehealth · No Kiosk Scan
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      <div className="p-4 rounded-[18px] bg-rose-50/50 border border-rose-100/80 space-y-1">
-                        <span className="text-xs text-rose-600 font-bold block">Blood Pressure</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">
-                          {selected.vitals.bp || "-- / --"}
+                  {/* Balanced 2-Column Clinical Dossier Subgrid (Left: Intake & Telemetry | Right: Patient Shared Reports) */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+                    {/* Left Sub-Column: Clinical Intake & Vitals Telemetry (5 cols) */}
+                    <div className="xl:col-span-5 space-y-4">
+                      {/* Intake & Chief Complaint Card */}
+                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
+                            <Stethoscope className="h-3.5 w-3.5 text-[#F2052C]" /> Clinical Intake
+                          </span>
+                          <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
+                            {selected.type === "instant" ? "Instant Queue" : selected.slotTime ? `Slot: ${selected.slotTime}` : "Scheduled"}
+                          </Badge>
                         </div>
-                        <span className="text-[10px] font-semibold text-rose-500">
-                          {selected.vitals.bp ? "mmHg" : "Not measured (Remote)"}
-                        </span>
-                      </div>
 
-                      <div className="p-4 rounded-[18px] bg-emerald-50/50 border border-emerald-100/80 space-y-1">
-                        <span className="text-xs text-emerald-600 font-bold block">Heart Rate</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">
-                          {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
-                        </div>
-                        <span className="text-[10px] font-semibold text-emerald-500">
-                          {selected.vitals.pulse ? "Normal Rhythm" : "Not measured (Remote)"}
-                        </span>
-                      </div>
-
-                      <div className="p-4 rounded-[18px] bg-amber-50/50 border border-amber-100/80 space-y-1">
-                        <span className="text-xs text-amber-600 font-bold block">Body Temp</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">
-                          {selected.vitals.temp || "--"}
-                        </div>
-                        <span className="text-[10px] font-semibold text-amber-500">
-                          {selected.vitals.temp ? "Sensor Synced" : "Not measured (Remote)"}
-                        </span>
-                      </div>
-
-                      <div className="p-4 rounded-[18px] bg-cyan-50/50 border border-cyan-100/80 space-y-1">
-                        <span className="text-xs text-cyan-600 font-bold block">Oxygen Saturation</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">
-                          {selected.vitals.spo2 || "--"}
-                        </div>
-                        <span className="text-[10px] font-semibold text-cyan-500">
-                          {selected.vitals.spo2 ? "SpO2 Level" : "Not measured (Remote)"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                        Chief Complaint & Case Notes
-                      </span>
-                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">
-                        {selected.notes || "Routine telehealth wellness consultation requested."}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Patient Shared Health Reports Section (Displayed in Appointment Details) */}
-                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="h-9 w-9 rounded-[12px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold">
-                          <FileCheck2 className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-extrabold text-[#14213D]">
-                            Patient Shared Health Reports & Attachments
-                          </h3>
-                          <p className="text-xs text-slate-400">
-                            Diagnostic files, previous prescriptions, and lab tests submitted by the patient
+                        <div className="p-3 rounded-[14px] bg-slate-50 border border-slate-100 space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Chief Complaint
+                          </span>
+                          <p className="text-xs font-bold text-slate-800 leading-snug">
+                            {selected.condition}
                           </p>
                         </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Patient Case Notes / History
+                          </span>
+                          <p className="text-xs font-medium text-slate-600 leading-relaxed bg-slate-50/70 p-3 rounded-[14px] border border-slate-100 min-h-[55px]">
+                            {selected.notes || "Standard telehealth clinical consultation requested."}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Clinical Vitals & Telemetry Card */}
+                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-extrabold text-[#14213D] flex items-center gap-1.5">
+                            <Activity className="h-4 w-4 text-[#F2052C]" />
+                            {selected.vitals.hasRealKioskData ? "Kiosk Hardware Telemetry" : "Patient Clinical Vitals"}
+                          </h4>
+                          {selected.vitals.hasRealKioskData ? (
+                            <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono flex items-center gap-1">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Hardware Synced
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium">
+                              Remote Telehealth
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          {/* Blood Pressure */}
+                          <div className="p-3 rounded-[14px] bg-rose-50/50 border border-rose-100 space-y-0.5">
+                            <span className="text-[10px] text-rose-600 font-bold block">Blood Pressure</span>
+                            <div className="text-base font-black text-slate-800 font-mono">
+                              {selected.vitals.bp || "-- / --"}
+                            </div>
+                            <span className="text-[9px] font-semibold text-rose-500">
+                              {selected.vitals.bp ? "mmHg" : "Remote / Unrecorded"}
+                            </span>
+                          </div>
+
+                          {/* Heart Rate */}
+                          <div className="p-3 rounded-[14px] bg-emerald-50/50 border border-emerald-100 space-y-0.5">
+                            <span className="text-[10px] text-emerald-600 font-bold block">Heart Rate</span>
+                            <div className="text-base font-black text-slate-800 font-mono">
+                              {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
+                            </div>
+                            <span className="text-[9px] font-semibold text-emerald-500">
+                              {selected.vitals.pulse ? "Normal Rhythm" : "Remote / Unrecorded"}
+                            </span>
+                          </div>
+
+                          {/* Body Temp */}
+                          <div className="p-3 rounded-[14px] bg-amber-50/50 border border-amber-100 space-y-0.5">
+                            <span className="text-[10px] text-amber-600 font-bold block">Body Temp</span>
+                            <div className="text-base font-black text-slate-800 font-mono">
+                              {selected.vitals.temp || "--"}
+                            </div>
+                            <span className="text-[9px] font-semibold text-amber-500">
+                              {selected.vitals.temp ? "Sensor Synced" : "Remote / Unrecorded"}
+                            </span>
+                          </div>
+
+                          {/* Oxygen Saturation */}
+                          <div className="p-3 rounded-[14px] bg-cyan-50/50 border border-cyan-100 space-y-0.5">
+                            <span className="text-[10px] text-cyan-600 font-bold block">Oxygen Saturation</span>
+                            <div className="text-base font-black text-slate-800 font-mono">
+                              {selected.vitals.spo2 || "--"}
+                            </div>
+                            <span className="text-[9px] font-semibold text-cyan-500">
+                              {selected.vitals.spo2 ? "SpO2 Level" : "Remote / Unrecorded"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Sub-Column: Patient Shared Health Reports & Attachments (7 cols) */}
+                    <div className="xl:col-span-7 bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3.5">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="h-8.5 w-8.5 rounded-[12px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold shrink-0">
+                            <FileCheck2 className="h-4.5 w-4.5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-xs font-black text-[#14213D]">
+                                Shared Health Reports & Files
+                              </h3>
+                              {sharedReports.length > 0 && (
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold">
+                                  {sharedReports.length} {sharedReports.length === 1 ? "file" : "files"}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                              Diagnostic scans, lab tests & prescriptions submitted by patient
+                            </p>
+                          </div>
+                        </div>
+
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[10px] text-[11px] font-bold h-7.5 px-2.5 flex items-center gap-1 shadow-xs"
+                          >
+                            <Lock className="h-3 w-3" /> Unlock Records
+                          </Button>
+                        ) : sharedReportsStatus === "unlocked" && sharedReports.length > 0 ? (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                            <Unlock className="h-3 w-3 text-emerald-600" /> NMC / ABDM Verified
+                          </Badge>
+                        ) : null}
                       </div>
 
                       {sharedReportsStatus === "declaration_required" ? (
-                        <Button
-                          size="sm"
-                          onClick={() => setDeclarationModalOpen(true)}
-                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8 flex items-center gap-1 shadow-xs"
-                        >
-                          <Lock className="h-3 w-3" /> Unlock Records
-                        </Button>
-                      ) : sharedReportsStatus === "unlocked" && sharedReports.length > 0 ? (
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1">
-                          <Unlock className="h-3 w-3 text-emerald-600" /> NMC / ABDM Verified
-                        </Badge>
-                      ) : null}
-                    </div>
-
-                    {sharedReportsStatus === "declaration_required" ? (
-                      <div className="p-7 rounded-[20px] bg-amber-50/70 border border-amber-200/80 text-center space-y-3">
-                        <div className="h-11 w-11 rounded-2xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
-                          <Lock className="h-5 w-5" />
+                        <div className="p-5 rounded-[18px] bg-amber-50/70 border border-amber-200/80 text-center space-y-2.5">
+                          <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
+                            <Lock className="h-4.5 w-4.5" />
+                          </div>
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-extrabold text-amber-950">
+                              Patient Medical History Locked (ABDM / NMC Compliance)
+                            </h4>
+                            <p className="text-[11px] text-amber-800/80 max-w-sm mx-auto leading-relaxed">
+                              Under National Medical Commission (NMC) Telemedicine Practice Guidelines, you must accept the clinical compliance declaration to access and decrypt this patient's shared diagnostic records.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[10px] text-xs h-8 px-4 shadow-xs inline-flex items-center gap-1.5"
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" /> Sign Compliance Declaration & Unlock
+                          </Button>
                         </div>
-                        <div className="space-y-1">
-                          <h4 className="text-sm font-extrabold text-amber-950">
-                            Patient Medical History Locked (ABDM / NMC Compliance)
-                          </h4>
-                          <p className="text-xs text-amber-800/80 max-w-md mx-auto leading-relaxed">
-                            Under National Medical Commission (NMC) Telemedicine Practice Guidelines, you must accept the clinical compliance declaration to access and decrypt this patient's shared diagnostic records.
+                      ) : sharedReportsStatus === "loading" ? (
+                        <div className="p-8 text-center bg-slate-50/70 rounded-[18px] border border-slate-200/80 space-y-2">
+                          <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
+                          <p className="text-xs font-bold text-slate-700">Verifying ABDM Consent & Loading Records...</p>
+                        </div>
+                      ) : sharedReports.length > 0 ? (
+                        <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                          {sharedReports.map((r) => (
+                            <div
+                              key={r.id}
+                              className="p-3.5 rounded-[16px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-2.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="h-8.5 w-8.5 rounded-[10px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                                    <FileText className="h-4.5 w-4.5" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="text-xs font-black text-[#14213D] leading-tight truncate">
+                                      {r.title}
+                                    </h4>
+                                    <span className="text-[10px] text-slate-400 font-semibold">
+                                      {r.type} · {r.date}
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50/80 p-2 rounded-[10px] border border-slate-100">
+                                {r.summary}
+                              </p>
+
+                              <div className="flex items-center justify-between pt-0.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (r.fileUrl && r.fileUrl !== "#") {
+                                      window.open(r.fileUrl, "_blank");
+                                    } else {
+                                      setPreviewReport(r);
+                                    }
+                                  }}
+                                  className="h-7.5 px-2.5 text-xs font-bold rounded-[8px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1.5"
+                                >
+                                  <ExternalLink className="h-3 w-3 text-[#35B7C9]" /> Inspect File
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    if (r.fileUrl && r.fileUrl !== "#") {
+                                      window.open(r.fileUrl, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Download Link Unavailable",
+                                        description: `Direct storage URL for ${r.title} was not provided with this record.`,
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-7.5 px-2.5 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[8px] flex items-center gap-1"
+                                >
+                                  <Download className="h-3 w-3" /> Download
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-7 text-center bg-slate-50/70 rounded-[18px] border border-dashed border-slate-200/90 space-y-1.5">
+                          <div className="h-9 w-9 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                            <FileText className="h-4.5 w-4.5" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">No Patient Health Reports Shared</p>
+                          <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                            The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this booking.
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={() => setDeclarationModalOpen(true)}
-                          className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[12px] text-xs h-9 px-5 shadow-sm inline-flex items-center gap-1.5"
-                        >
-                          <ShieldCheck className="h-4 w-4" /> Sign Compliance Declaration & Unlock
-                        </Button>
-                      </div>
-                    ) : sharedReportsStatus === "loading" ? (
-                      <div className="p-8 text-center bg-slate-50/70 rounded-[20px] border border-slate-200/80 space-y-2">
-                        <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
-                        <p className="text-xs font-bold text-slate-700">Verifying ABDM Consent & Loading Records...</p>
-                      </div>
-                    ) : sharedReports.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                        {sharedReports.map((r) => (
-                          <div
-                            key={r.id}
-                            className="p-4 rounded-[18px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-center gap-2.5">
-                                <div className="h-9 w-9 rounded-[12px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-                                  <FileText className="h-5 w-5" />
-                                </div>
-                                <div>
-                                  <h4 className="text-xs font-black text-[#14213D] leading-tight line-clamp-1">
-                                    {r.title}
-                                  </h4>
-                                  <span className="text-[10px] text-slate-400 font-semibold">
-                                    {r.type} · {r.date}
-                                  </span>
-                                </div>
-                              </div>
-                              <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50 p-2.5 rounded-[12px] border border-slate-100">
-                              {r.summary}
-                            </p>
-
-                            <div className="flex items-center justify-between pt-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  if (r.fileUrl && r.fileUrl !== "#") {
-                                    window.open(r.fileUrl, "_blank");
-                                  } else {
-                                    setPreviewReport(r);
-                                  }
-                                }}
-                                className="h-8 text-xs font-bold rounded-[10px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1.5"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5 text-[#35B7C9]" /> Inspect File
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  if (r.fileUrl && r.fileUrl !== "#") {
-                                    window.open(r.fileUrl, "_blank");
-                                  } else {
-                                    toast({
-                                      title: "Download Link Unavailable",
-                                      description: `Direct storage URL for ${r.title} was not provided with this record.`,
-                                      variant: "destructive",
-                                    });
-                                  }
-                                }}
-                                className="h-8 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[10px] flex items-center gap-1"
-                              >
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="p-8 text-center bg-slate-50/70 rounded-[20px] border border-dashed border-slate-200/90 space-y-2">
-                        <div className="h-10 w-10 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-                          <FileText className="h-5 w-5" />
-                        </div>
-                        <p className="text-xs font-bold text-slate-700">No Patient Health Reports Shared</p>
-                        <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                          The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this consultation.
-                        </p>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
