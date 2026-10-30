@@ -67,7 +67,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/api-request";
 import { listBookings, updateBookingStatus, getBookingReports } from "@/services/booking.service";
 import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
-import { listReports, listReportsByProfile } from "@/services/report.service";
+import { listReports, listReportsByProfile, listReportsByUser } from "@/services/report.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
@@ -100,11 +100,12 @@ export interface PatientRecord {
   avatar: string;
   notes: string;
   vitals: {
-    bp: string;
-    temp: string;
-    pulse: number | string;
-    spo2?: string;
+    bp: string | null;
+    temp: string | null;
+    pulse: number | string | null;
+    spo2?: string | null;
     bmi?: string;
+    hasRealKioskData: boolean;
   };
   bookingId?: string;
   phone?: string;
@@ -332,39 +333,50 @@ const Consultations: React.FC = () => {
     pulse: "72",
   });
 
-  // Default sample reports builder for realistic patient dossiers
-  const createDefaultReports = (patientName: string): HealthReportItem[] => [
-    {
-      id: `rep-cbc-${Date.now()}-1`,
-      title: "Comprehensive Metabolic & CBC Blood Panel",
-      type: "Lab Report",
-      date: "Oct 24, 2026",
-      fileUrl: "#",
-      fileSize: "1.4 MB",
-      summary: "Hemoglobin 14.2 g/dL, WBC 6,800 /mcL, Fasting Blood Sugar 98 mg/dL. All metabolic parameters within normal clinical limits.",
+  // Helper to map backend report records to standard UI model
+  const mapRawReportToItem = (r: any, rIdx: number): HealthReportItem => {
+    const fileUrl = r.s3Link || r.fileUrl || r.url || r.filePath || "#";
+    const title =
+      r.title ||
+      r.name ||
+      r.reportCode ||
+      r.fileName ||
+      (r.product?.name ? `${r.product.name} Diagnostic File` : null) ||
+      `Diagnostic Record #${rIdx + 1}`;
+
+    let repType: HealthReportItem["type"] = "Lab Report";
+    const rawType = (r.type || r.reportType || r.testType || "").toLowerCase();
+    if (rawType.includes("radio") || rawType.includes("x-ray") || rawType.includes("mri") || rawType.includes("scan")) {
+      repType = "Radiology";
+    } else if (rawType.includes("presc") || rawType.includes("rx")) {
+      repType = "Prescription";
+    } else if (rawType.includes("discharge") || rawType.includes("summary")) {
+      repType = "Discharge Summary";
+    } else if (rawType.includes("ecg") || rawType.includes("kiosk") || rawType.includes("bio") || rawType.includes("vital")) {
+      repType = "Biometric Screen";
+    }
+
+    const dateStr = r.createdAt || r.date || r.uploadedAt;
+    const formattedDate = dateStr && !isNaN(new Date(dateStr).getTime())
+      ? new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : "Recent";
+
+    return {
+      id: r._id || r.id || `rep-${rIdx}`,
+      title,
+      type: repType,
+      date: formattedDate,
+      fileUrl,
+      fileSize: r.fileSize || (r.size ? `${Math.round(Number(r.size) / 1024 || 1)} KB` : "1.2 MB"),
+      summary:
+        r.summary ||
+        r.notes ||
+        r.remarks ||
+        (r.product?.name ? `Recorded via Onyx Telehealth Device (${r.product.name}).` : null) ||
+        "Patient health record linked to consultation.",
       isVerified: true,
-    },
-    {
-      id: `rep-rad-${Date.now()}-2`,
-      title: "Digital Chest Radiograph (PA View)",
-      type: "Radiology",
-      date: "Oct 22, 2026",
-      fileUrl: "#",
-      fileSize: "4.8 MB",
-      summary: "Clear lung fields bilaterally without focal consolidation, pneumothorax, or pleural effusion. Normal cardiothoracic ratio.",
-      isVerified: true,
-    },
-    {
-      id: `rep-ecg-${Date.now()}-3`,
-      title: "12-Lead Resting Electrocardiogram (ECG)",
-      type: "Biometric Screen",
-      date: "Oct 20, 2026",
-      fileUrl: "#",
-      fileSize: "820 KB",
-      summary: "Normal sinus rhythm at 72 bpm. PR interval 156 ms, QRS duration 88 ms. No ST segment elevation or ischemic changes observed.",
-      isVerified: true,
-    },
-  ];
+    };
+  };
 
   /* ============================================================
      FETCH CLINICAL DATA & PATIENT QUEUE
@@ -398,11 +410,25 @@ const Consultations: React.FC = () => {
         )
       ) as string[];
 
-      const profileMap = new Map<string, any>();
-      const reportMap = new Map<string, any[]>();
+      const userIds = Array.from(
+        new Set(
+          bookingList
+            .map((b: any) => (typeof b.userId === "string" ? b.userId : b.userId?._id))
+            .filter(Boolean)
+        )
+      ) as string[];
 
-      await Promise.allSettled(
-        profileIds.map(async (pId) => {
+      const bookingIds = Array.from(
+        new Set(bookingList.map((b: any) => b._id).filter(Boolean))
+      ) as string[];
+
+      const profileMap = new Map<string, any>();
+      const profileReportMap = new Map<string, any[]>();
+      const userReportMap = new Map<string, any[]>();
+      const bookingReportMap = new Map<string, any[]>();
+
+      await Promise.allSettled([
+        ...profileIds.map(async (pId) => {
           try {
             const pRes = await viewProfile(pId);
             const prof = pRes?.data || pRes?.profile || pRes;
@@ -412,10 +438,24 @@ const Consultations: React.FC = () => {
           try {
             const rRes = await listReportsByProfile(pId);
             const reps = Array.isArray(rRes) ? rRes : rRes?.reports || [];
-            if (reps.length > 0) reportMap.set(pId, reps);
+            if (reps.length > 0) profileReportMap.set(pId, reps);
           } catch {}
-        })
-      );
+        }),
+        ...userIds.map(async (uId) => {
+          try {
+            const rRes = await listReportsByUser(uId);
+            const reps = Array.isArray(rRes) ? rRes : rRes?.reports || [];
+            if (reps.length > 0) userReportMap.set(uId, reps);
+          } catch {}
+        }),
+        ...bookingIds.map(async (bId) => {
+          try {
+            const bRes = await getBookingReports(bId);
+            const reps = Array.isArray(bRes?.reports) ? bRes.reports : [];
+            if (reps.length > 0) bookingReportMap.set(bId, reps);
+          } catch {}
+        }),
+      ]);
 
       const realPatients: PatientRecord[] = [];
 
@@ -423,6 +463,9 @@ const Consultations: React.FC = () => {
       if (bookingList.length > 0) {
         bookingList.forEach((b: any, index: number) => {
           const pIdStr = typeof b.profileId === "string" ? b.profileId : b.profileId?._id;
+          const uIdStr = typeof b.userId === "string" ? b.userId : b.userId?._id;
+          const bIdStr = b._id;
+
           const fetchedProfile = pIdStr ? profileMap.get(pIdStr) : null;
           const pName =
             fetchedProfile?.name ||
@@ -454,39 +497,58 @@ const Consultations: React.FC = () => {
             formattedPhone = fetchedProfile.phone;
           }
 
-          const profileReportsRaw = (pIdStr ? reportMap.get(pIdStr) : null) || [];
-          let patientReports: HealthReportItem[] = [];
+          // Gather all authentic candidate reports across booking, profile, user, and global report store
+          const rawCandidateReports: any[] = [
+            ...(Array.isArray(b.reports) ? b.reports : []),
+            ...(bIdStr && bookingReportMap.has(bIdStr) ? bookingReportMap.get(bIdStr)! : []),
+            ...(pIdStr && profileReportMap.has(pIdStr) ? profileReportMap.get(pIdStr)! : []),
+            ...(uIdStr && userReportMap.has(uIdStr) ? userReportMap.get(uIdStr)! : []),
+            ...reportList.filter((r: any) => {
+              const rProfileId = typeof r.profileId === "string" ? r.profileId : r.profile?._id;
+              const rUserId = typeof r.userId === "string" ? r.userId : r.user?._id;
+              return (pIdStr && rProfileId === pIdStr) || (uIdStr && rUserId === uIdStr);
+            }),
+          ];
 
-          if (profileReportsRaw.length > 0) {
-            patientReports = profileReportsRaw.map((r: any, rIdx: number) => ({
-              id: r._id || `rep-${rIdx}`,
-              title: r.title || r.name || `Diagnostic File #${rIdx + 1}`,
-              type: r.type || "Lab Report",
-              date: r.date || r.createdAt ? new Date(r.date || r.createdAt).toLocaleDateString() : "Recent",
-              fileUrl: r.fileUrl || r.url || "#",
-              fileSize: r.fileSize || "1.2 MB",
-              summary: r.summary || r.notes || "Official diagnostic file uploaded by patient during appointment booking.",
-              isVerified: true,
-            }));
-          } else if (Array.isArray(b.reports) && b.reports.length > 0) {
-            patientReports = b.reports.map((r: any, rIdx: number) => ({
-              id: r._id || `rep-b-${rIdx}`,
-              title: r.title || r.name || `Shared Report #${rIdx + 1}`,
-              type: r.type || "Lab Report",
-              date: r.date || "Recent",
-              fileUrl: r.fileUrl || r.url || "#",
-              fileSize: r.fileSize || "1.5 MB",
-              summary: r.summary || "Health record attached at booking time.",
-              isVerified: true,
-            }));
-          } else {
-            patientReports = createDefaultReports(pName);
+          // Deduplicate reports by record ID
+          const seenReportKeys = new Set<string>();
+          const uniqueCandidateReports: any[] = [];
+          for (const r of rawCandidateReports) {
+            const key = String(r._id || r.id || r.reportCode || r.fileUrl || Math.random());
+            if (!seenReportKeys.has(key)) {
+              seenReportKeys.add(key);
+              uniqueCandidateReports.push(r);
+            }
           }
 
-          const bp = b.vitals?.bp || "120/80";
-          const temp = b.vitals?.temp || "98.6°F";
-          const pulse = b.vitals?.pulse || 72;
-          const spo2 = b.vitals?.spo2 || "98%";
+          const patientReports: HealthReportItem[] = uniqueCandidateReports.map((r, rIdx) =>
+            mapRawReportToItem(r, rIdx)
+          );
+
+          // Real Hardware IoT Telemetry detection:
+          // Only flag as live synced if actual measured vitals values exist in the database.
+          const rawVitals = b.vitals || fetchedProfile?.vitals || null;
+          const hasRealKioskData = Boolean(
+            rawVitals &&
+            (rawVitals.bp || rawVitals.pulse || rawVitals.temp || rawVitals.spo2 || rawVitals.heartRate)
+          );
+
+          const bp = hasRealKioskData ? (rawVitals.bp || null) : null;
+          const temp = hasRealKioskData
+            ? rawVitals.temp
+              ? String(rawVitals.temp).includes("°")
+                ? String(rawVitals.temp)
+                : `${rawVitals.temp}°F`
+              : null
+            : null;
+          const pulse = hasRealKioskData ? (rawVitals.pulse || rawVitals.heartRate || null) : null;
+          const spo2 = hasRealKioskData
+            ? rawVitals.spo2
+              ? String(rawVitals.spo2).includes("%")
+                ? String(rawVitals.spo2)
+                : `${rawVitals.spo2}%`
+              : null
+            : null;
 
           let qStatus: PatientRecord["status"] = "Scheduled";
           const rawStatus = (b.status || "").toLowerCase();
@@ -523,7 +585,7 @@ const Consultations: React.FC = () => {
               .slice(0, 2)
               .toUpperCase(),
             notes: b.notes || `Chief complaint: ${cond}`,
-            vitals: { bp, temp, pulse, spo2 },
+            vitals: { bp, temp, pulse, spo2, hasRealKioskData },
             bookingId: b._id,
             phone: formattedPhone,
             reports: patientReports,
@@ -536,6 +598,10 @@ const Consultations: React.FC = () => {
         profileList.forEach((p: any, index: number) => {
           const pName = p.name || `Patient ${index + 1}`;
           if (!realPatients.some((rp) => rp.name.toLowerCase() === pName.toLowerCase())) {
+            const profReportsRaw = (p._id && profileReportMap.get(p._id)) || [];
+            const profReports = profReportsRaw.map((r, rIdx) => mapRawReportToItem(r, rIdx));
+            const profHasVitals = Boolean(p.vitals && (p.vitals.bp || p.vitals.pulse || p.vitals.temp));
+
             realPatients.push({
               id: p._id || p.id || `prof-${index}`,
               name: pName,
@@ -554,9 +620,15 @@ const Consultations: React.FC = () => {
                 .slice(0, 2)
                 .toUpperCase(),
               notes: p.notes || "Kiosk-registered biometric profile.",
-              vitals: { bp: "118/76", temp: "98.4°F", pulse: 70, spo2: "99%" },
+              vitals: {
+                bp: profHasVitals ? (p.vitals?.bp || null) : null,
+                temp: profHasVitals ? (p.vitals?.temp || null) : null,
+                pulse: profHasVitals ? (p.vitals?.pulse || null) : null,
+                spo2: profHasVitals ? (p.vitals?.spo2 || null) : null,
+                hasRealKioskData: profHasVitals,
+              },
               phone: p.phone,
-              reports: createDefaultReports(pName),
+              reports: profReports,
             });
           }
         });
@@ -627,16 +699,9 @@ const Consultations: React.FC = () => {
       // 1. Check official booking reports endpoint
       const bookingReportsRes = await getBookingReports(targetBookingId).catch(() => null);
       if (bookingReportsRes && Array.isArray(bookingReportsRes.reports) && bookingReportsRes.reports.length > 0) {
-        const mapped: HealthReportItem[] = bookingReportsRes.reports.map((r: any, idx: number) => ({
-          id: r.id || r._id || `rep-${idx}`,
-          title: r.title || r.name || `Health Report #${idx + 1}`,
-          type: (r.type as any) || "Lab Report",
-          date: r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : r.date || "Recent",
-          fileUrl: r.fileUrl || r.url || "#",
-          fileSize: r.fileSize || "1.2 MB",
-          summary: r.summary || "Diagnostic health record attached to consultation booking.",
-          isVerified: true,
-        }));
+        const mapped: HealthReportItem[] = bookingReportsRes.reports.map((r: any, idx: number) =>
+          mapRawReportToItem(r, idx)
+        );
         setSharedReports(mapped);
         setSharedReportsStatus("unlocked");
         return;
@@ -647,24 +712,17 @@ const Consultations: React.FC = () => {
       if (res?.declarationRequired) {
         setSharedReportsStatus("declaration_required");
       } else if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
-        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) => ({
-          id: r._id || `rep-${idx}`,
-          title: r.title || `Diagnostic File #${idx + 1}`,
-          type: r.type || "Lab Report",
-          date: r.date || "Recent",
-          fileUrl: r.fileUrl || r.url || "#",
-          fileSize: r.fileSize || "1.2 MB",
-          summary: r.summary || "External health record securely linked via ABDM.",
-          isVerified: true,
-        }));
+        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) =>
+          mapRawReportToItem(r, idx)
+        );
         setSharedReports(mapped);
         setSharedReportsStatus("unlocked");
       } else {
-        setSharedReports(selected?.reports || createDefaultReports(selected?.name || "Patient"));
+        setSharedReports(selected?.reports || []);
         setSharedReportsStatus("unlocked");
       }
     } catch {
-      setSharedReports(selected?.reports || createDefaultReports(selected?.name || "Patient"));
+      setSharedReports(selected?.reports || []);
       setSharedReportsStatus("unlocked");
     }
   };
@@ -1226,13 +1284,14 @@ const Consultations: React.FC = () => {
           .toUpperCase(),
         notes: `Clinical walk-in. Chief complaint: ${newPatient.condition}`,
         vitals: {
-          bp: newPatient.bp,
-          temp: newPatient.temp,
-          pulse: newPatient.pulse,
+          bp: newPatient.bp || null,
+          temp: newPatient.temp || null,
+          pulse: newPatient.pulse || null,
           spo2: "98%",
+          hasRealKioskData: false,
         },
         phone: newPatient.phone,
-        reports: createDefaultReports(newPatient.name.trim()),
+        reports: [],
       };
 
       setPatients((prev) => [addedRecord, ...prev]);
@@ -1322,12 +1381,22 @@ const Consultations: React.FC = () => {
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                 <CallTimerBadge active={workflowPhase === "encounter"} onTick={(s) => { callDurationRef.current = s; }} />
                 <span className="text-white/20">|</span>
-                <span className="text-[11px] text-emerald-400 font-mono font-bold flex items-center gap-1">
-                  <HeartPulse className="h-3.5 w-3.5 text-rose-400" /> {selected.vitals.bp}
-                </span>
-                <span className="text-[11px] text-cyan-300 font-mono font-bold hidden sm:inline">
-                  · {selected.vitals.pulse} bpm
-                </span>
+                {selected.vitals.hasRealKioskData && selected.vitals.bp ? (
+                  <>
+                    <span className="text-[11px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                      <HeartPulse className="h-3.5 w-3.5 text-rose-400" /> {selected.vitals.bp}
+                    </span>
+                    {selected.vitals.pulse && (
+                      <span className="text-[11px] text-cyan-300 font-mono font-bold hidden sm:inline">
+                        · {selected.vitals.pulse} bpm
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-[11px] text-slate-300 font-medium">
+                    Remote Consult
+                  </span>
+                )}
               </div>
 
               {/* Layout Mode Switcher */}
@@ -1450,15 +1519,25 @@ const Consultations: React.FC = () => {
                     <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-xs font-black">{selected.name}</span>
                     <span className="text-white/20">|</span>
-                    <span className="text-[11px] font-mono font-bold text-rose-300 flex items-center gap-1">
-                      <Heart className="h-3 w-3 text-rose-400 fill-rose-400" /> {selected.vitals.bp}
-                    </span>
-                    <span className="text-[11px] font-mono text-cyan-300 font-bold hidden sm:inline">
-                      {selected.vitals.pulse} bpm
-                    </span>
-                    <span className="text-[11px] font-mono text-emerald-300 font-bold hidden md:inline">
-                      {selected.vitals.spo2 || "99%"} SpO2
-                    </span>
+                    {selected.vitals.hasRealKioskData && selected.vitals.bp ? (
+                      <>
+                        <span className="text-[11px] font-mono font-bold text-rose-300 flex items-center gap-1">
+                          <Heart className="h-3 w-3 text-rose-400 fill-rose-400" /> {selected.vitals.bp}
+                        </span>
+                        {selected.vitals.pulse && (
+                          <span className="text-[11px] font-mono text-cyan-300 font-bold hidden sm:inline">
+                            {selected.vitals.pulse} bpm
+                          </span>
+                        )}
+                        {selected.vitals.spo2 && (
+                          <span className="text-[11px] font-mono text-emerald-300 font-bold hidden md:inline">
+                            {selected.vitals.spo2} SpO2
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-300 font-medium">Remote Session</span>
+                    )}
                   </div>
                 </div>
 
@@ -2025,34 +2104,56 @@ const Consultations: React.FC = () => {
                         <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                           <HeartPulse className="h-3.5 w-3.5 text-rose-500" /> Kiosk Screening Telemetry
                         </span>
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">
-                          Verified IoT Link
-                        </Badge>
+                        {selected.vitals.hasRealKioskData ? (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">
+                            Verified IoT Link
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
+                            Remote Patient (No Kiosk Scan)
+                          </Badge>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-3 text-center">
                         <div className="p-3.5 rounded-[18px] bg-rose-50/60 border border-rose-100">
                           <div className="text-[10px] font-bold text-rose-600">Blood Pressure</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">{selected.vitals.bp}</div>
-                          <span className="text-[10px] text-slate-400 font-semibold">mmHg (Norm: 120/80)</span>
+                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
+                            {selected.vitals.bp || "-- / --"}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {selected.vitals.bp ? "mmHg (Norm: 120/80)" : "Not recorded (Remote)"}
+                          </span>
                         </div>
 
                         <div className="p-3.5 rounded-[18px] bg-emerald-50/60 border border-emerald-100">
                           <div className="text-[10px] font-bold text-emerald-600">Heart Rate</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">{selected.vitals.pulse} bpm</div>
-                          <span className="text-[10px] text-slate-400 font-semibold">Normal Sinus Rhythm</span>
+                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
+                            {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {selected.vitals.pulse ? "Normal Sinus Rhythm" : "Not recorded (Remote)"}
+                          </span>
                         </div>
 
                         <div className="p-3.5 rounded-[18px] bg-amber-50/60 border border-amber-100">
                           <div className="text-[10px] font-bold text-amber-600">Body Temp</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">{selected.vitals.temp}</div>
-                          <span className="text-[10px] text-slate-400 font-semibold">Thermal Sensor</span>
+                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
+                            {selected.vitals.temp || "--"}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {selected.vitals.temp ? "Thermal Sensor" : "Not recorded (Remote)"}
+                          </span>
                         </div>
 
                         <div className="p-3.5 rounded-[18px] bg-cyan-50/60 border border-cyan-100">
                           <div className="text-[10px] font-bold text-cyan-600">Oxygen Saturation</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">{selected.vitals.spo2 || "99%"}</div>
-                          <span className="text-[10px] text-slate-400 font-semibold">SpO2 Level</span>
+                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
+                            {selected.vitals.spo2 || "--"}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {selected.vitals.spo2 ? "SpO2 Level" : "Not recorded (Remote)"}
+                          </span>
                         </div>
                       </div>
 
@@ -2317,7 +2418,13 @@ const Consultations: React.FC = () => {
                         {/* Card Action Controls: Admit / Postpone / Reject */}
                         <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
                           <span className="font-mono text-slate-500 text-[11px] flex items-center gap-1">
-                            <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
+                            {p.vitals.hasRealKioskData && p.vitals.bp ? (
+                              <>
+                                <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium">Remote Consult</span>
+                            )}
                           </span>
 
                           <div className="flex items-center gap-1.5">
@@ -2427,34 +2534,57 @@ const Consultations: React.FC = () => {
                       <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
                         <Activity className="h-4.5 w-4.5 text-[#F2052C]" /> Real-Time Kiosk IoT Telemetry
                       </h3>
-                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono">
-                        Hardware Live Synced
-                      </Badge>
+                      {selected.vitals.hasRealKioskData ? (
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                          Hardware Live Synced
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-xs font-medium">
+                          Remote Telehealth · No Kiosk Scan
+                        </Badge>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       <div className="p-4 rounded-[18px] bg-rose-50/50 border border-rose-100/80 space-y-1">
                         <span className="text-xs text-rose-600 font-bold block">Blood Pressure</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.bp}</div>
-                        <span className="text-[10px] font-semibold text-rose-500">mmHg</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">
+                          {selected.vitals.bp || "-- / --"}
+                        </div>
+                        <span className="text-[10px] font-semibold text-rose-500">
+                          {selected.vitals.bp ? "mmHg" : "Not measured (Remote)"}
+                        </span>
                       </div>
 
                       <div className="p-4 rounded-[18px] bg-emerald-50/50 border border-emerald-100/80 space-y-1">
                         <span className="text-xs text-emerald-600 font-bold block">Heart Rate</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.pulse} bpm</div>
-                        <span className="text-[10px] font-semibold text-emerald-500">Normal Rhythm</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">
+                          {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
+                        </div>
+                        <span className="text-[10px] font-semibold text-emerald-500">
+                          {selected.vitals.pulse ? "Normal Rhythm" : "Not measured (Remote)"}
+                        </span>
                       </div>
 
                       <div className="p-4 rounded-[18px] bg-amber-50/50 border border-amber-100/80 space-y-1">
                         <span className="text-xs text-amber-600 font-bold block">Body Temp</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.temp}</div>
-                        <span className="text-[10px] font-semibold text-amber-500">Sensor Synced</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">
+                          {selected.vitals.temp || "--"}
+                        </div>
+                        <span className="text-[10px] font-semibold text-amber-500">
+                          {selected.vitals.temp ? "Sensor Synced" : "Not measured (Remote)"}
+                        </span>
                       </div>
 
                       <div className="p-4 rounded-[18px] bg-cyan-50/50 border border-cyan-100/80 space-y-1">
                         <span className="text-xs text-cyan-600 font-bold block">Oxygen Saturation</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.spo2 || "99%"}</div>
-                        <span className="text-[10px] font-semibold text-cyan-500">SpO2 Level</span>
+                        <div className="text-xl font-black text-slate-800 font-mono">
+                          {selected.vitals.spo2 || "--"}
+                        </div>
+                        <span className="text-[10px] font-semibold text-cyan-500">
+                          {selected.vitals.spo2 ? "SpO2 Level" : "Not measured (Remote)"}
+                        </span>
                       </div>
                     </div>
 
@@ -2532,7 +2662,13 @@ const Consultations: React.FC = () => {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => setPreviewReport(r)}
+                                onClick={() => {
+                                  if (r.fileUrl && r.fileUrl !== "#") {
+                                    window.open(r.fileUrl, "_blank");
+                                  } else {
+                                    setPreviewReport(r);
+                                  }
+                                }}
                                 className="h-8 text-xs font-bold rounded-[10px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1.5"
                               >
                                 <ExternalLink className="h-3.5 w-3.5 text-[#35B7C9]" /> Inspect File
@@ -2542,10 +2678,15 @@ const Consultations: React.FC = () => {
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => {
-                                  toast({
-                                    title: "Downloading File",
-                                    description: `Saved ${r.title} to local workstation.`,
-                                  });
+                                  if (r.fileUrl && r.fileUrl !== "#") {
+                                    window.open(r.fileUrl, "_blank");
+                                  } else {
+                                    toast({
+                                      title: "Download Link Unavailable",
+                                      description: `Direct storage URL for ${r.title} was not provided with this record.`,
+                                      variant: "destructive",
+                                    });
+                                  }
                                 }}
                                 className="h-8 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[10px] flex items-center gap-1"
                               >
@@ -2556,10 +2697,14 @@ const Consultations: React.FC = () => {
                         ))}
                       </div>
                     ) : (
-                      <div className="p-8 text-center bg-slate-50 rounded-[18px] border border-dashed border-slate-200">
-                        <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                        <p className="text-xs font-bold text-slate-600">No medical files attached for this booking</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Patient has not uploaded external lab records.</p>
+                      <div className="p-8 text-center bg-slate-50/70 rounded-[20px] border border-dashed border-slate-200/90 space-y-2">
+                        <div className="h-10 w-10 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                          <FileText className="h-5 w-5" />
+                        </div>
+                        <p className="text-xs font-bold text-slate-700">No Patient Health Reports Attached</p>
+                        <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                          The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this consultation.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -2759,7 +2904,7 @@ const Consultations: React.FC = () => {
                 ABDM Verified digital signature. Certified authentic by diagnostic laboratory.
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="outline"
@@ -2772,13 +2917,25 @@ const Consultations: React.FC = () => {
                   <Plus className="h-3.5 w-3.5 mr-1" /> Append to SOAP Notes
                 </Button>
 
-                <Button
-                  size="sm"
-                  onClick={() => setPreviewReport(null)}
-                  className="rounded-[12px] h-9 px-4 text-xs font-bold bg-[#14213D] text-white"
-                >
-                  Close Document
-                </Button>
+                <div className="flex items-center gap-2">
+                  {previewReport.fileUrl && previewReport.fileUrl !== "#" && (
+                    <Button
+                      size="sm"
+                      onClick={() => window.open(previewReport.fileUrl, "_blank")}
+                      className="rounded-[12px] h-9 px-3 text-xs font-bold bg-[#35B7C9] hover:bg-[#2ca2b3] text-white flex items-center gap-1.5"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Original File
+                    </Button>
+                  )}
+
+                  <Button
+                    size="sm"
+                    onClick={() => setPreviewReport(null)}
+                    className="rounded-[12px] h-9 px-4 text-xs font-bold bg-[#14213D] text-white"
+                  >
+                    Close Document
+                  </Button>
+                </div>
               </div>
             </div>
           )}
