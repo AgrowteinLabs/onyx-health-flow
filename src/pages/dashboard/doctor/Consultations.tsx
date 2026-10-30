@@ -2455,8 +2455,8 @@ const Consultations: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Card Action Controls: Admit / Postpone / Reject */}
-                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                        {/* Card Action Controls: Only for Active / Scheduled / Waiting patients */}
+                        <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1.5">
                           <span className="font-mono text-slate-500 text-[11px] flex items-center gap-1">
                             {p.vitals.hasRealKioskData && p.vitals.bp ? (
                               <>
@@ -2467,41 +2467,73 @@ const Consultations: React.FC = () => {
                             )}
                           </span>
 
-                          <div className="flex items-center gap-1.5">
-                            {/* Postpone button */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => handleOpenPostpone(p, e)}
-                              className="h-6 px-2 text-[10px] font-bold text-amber-600 hover:bg-amber-50 rounded-[6px]"
-                              title="Postpone consultation"
-                            >
-                              <CalendarClock className="h-3 w-3 mr-0.5" /> Postpone
-                            </Button>
+                          {p.status === "Completed" ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-500" /> Completed
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelected(p);
+                                  openPrescriptionPdf({
+                                    patientName: p.name,
+                                    bookingId: p.bookingId,
+                                    diagnosis: p.condition,
+                                    medications: [],
+                                    instructions: "Consultation encounter completed and documented.",
+                                    duration: "Completed",
+                                  });
+                                }}
+                                className="h-6 px-2 text-[10px] font-bold text-slate-600 hover:text-[#14213D] hover:bg-slate-100 rounded-[6px] flex items-center gap-1"
+                                title="View official prescription slip"
+                              >
+                                <Printer className="h-3 w-3 text-[#F2052C]" /> View Rx
+                              </Button>
+                            </div>
+                          ) : p.status === "Cancelled" ? (
+                            <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-rose-200">
+                              <Ban className="h-3 w-3 text-rose-500" /> Declined
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              {/* Postpone button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => handleOpenPostpone(p, e)}
+                                className="h-6 px-2 text-[10px] font-bold text-amber-600 hover:bg-amber-50 rounded-[6px]"
+                                title="Postpone consultation"
+                              >
+                                <CalendarClock className="h-3 w-3 mr-0.5" /> Postpone
+                              </Button>
 
-                            {/* Reject button */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => handleOpenReject(p, e)}
-                              className="h-6 px-2 text-[10px] font-bold text-rose-600 hover:bg-rose-50 rounded-[6px]"
-                              title="Decline consultation"
-                            >
-                              <Ban className="h-3 w-3 mr-0.5" /> Decline
-                            </Button>
+                              {/* Reject button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => handleOpenReject(p, e)}
+                                className="h-6 px-2 text-[10px] font-bold text-rose-600 hover:bg-rose-50 rounded-[6px]"
+                                title="Decline consultation"
+                              >
+                                <Ban className="h-3 w-3 mr-0.5" /> Decline
+                              </Button>
 
-                            {/* Admit button */}
-                            <Button
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAdmitPatient(p);
-                              }}
-                              className="h-6 px-2.5 text-[10px] font-black bg-[#F2052C] hover:bg-[#D00424] text-white rounded-[6px] shadow-xs flex items-center gap-1"
-                            >
-                              <Video className="h-3 w-3" /> Admit
-                            </Button>
-                          </div>
+                              {/* Admit button */}
+                              <Button
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAdmitPatient(p);
+                                }}
+                                className="h-6 px-2.5 text-[10px] font-black bg-[#F2052C] hover:bg-[#D00424] text-white rounded-[6px] shadow-xs flex items-center gap-1"
+                              >
+                                <Video className="h-3 w-3" /> Admit
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -2540,74 +2572,113 @@ const Consultations: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Doctor Action Controls: Admit / Postpone / Reject */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Button
-                          variant="outline"
-                          onClick={() => handleOpenPostpone(selected)}
-                          className="rounded-[12px] h-9 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
-                        >
-                          <CalendarClock className="h-3.5 w-3.5 text-amber-300" /> Postpone
-                        </Button>
+                      {/* Doctor Action Controls: Only for Active / Scheduled / Waiting patients */}
+                      {selected.status === "Completed" ? (
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold px-3 py-1.5 rounded-[12px] flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Consultation Finished
+                          </Badge>
+                          <Button
+                            onClick={() =>
+                              openPrescriptionPdf({
+                                patientName: selected.name,
+                                bookingId: selected.bookingId,
+                                diagnosis: selected.condition,
+                                medications: medications.map((m) => ({
+                                  name: m.name,
+                                  dosage: m.dosage,
+                                  frequency: m.frequency,
+                                  duration: m.duration,
+                                  instructions: m.instructions,
+                                })),
+                                instructions: rxForm.instructions,
+                                duration: rxForm.duration,
+                              })
+                            }
+                            className="bg-white/10 hover:bg-white/20 text-white font-bold rounded-[12px] h-9 px-4 border border-white/20 text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                          >
+                            <Printer className="h-3.5 w-3.5 text-[#35B7C9]" /> View / Print Prescription Slip
+                          </Button>
+                        </div>
+                      ) : selected.status === "Cancelled" ? (
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold px-3 py-1.5 rounded-[12px] flex items-center gap-1.5">
+                            <Ban className="h-4 w-4 text-rose-400" /> Consultation Request Declined
+                          </Badge>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            onClick={() => handleOpenPostpone(selected)}
+                            className="rounded-[12px] h-9 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
+                          >
+                            <CalendarClock className="h-3.5 w-3.5 text-amber-300" /> Postpone
+                          </Button>
 
-                        <Button
-                          variant="outline"
-                          onClick={() => handleOpenReject(selected)}
-                          className="rounded-[12px] h-9 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
-                        >
-                          <Ban className="h-3.5 w-3.5 text-rose-400" /> Reject
-                        </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => handleOpenReject(selected)}
+                            className="rounded-[12px] h-9 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
+                          >
+                            <Ban className="h-3.5 w-3.5 text-rose-400" /> Reject
+                          </Button>
 
-                        <Button
-                          onClick={() => handleAdmitPatient(selected)}
-                          className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[12px] h-9 px-4.5 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-1.5 transform active:scale-95 transition-all"
-                        >
-                          <Video className="h-4 w-4" /> Admit to Video Room
-                        </Button>
-                      </div>
+                          <Button
+                            onClick={() => handleAdmitPatient(selected)}
+                            className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[12px] h-9 px-4.5 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-1.5 transform active:scale-95 transition-all"
+                          >
+                            <Video className="h-4 w-4" /> Admit to Video Room
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Balanced 2-Column Clinical Dossier Subgrid (Left: Intake & Telemetry | Right: Patient Shared Reports) */}
-                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 items-start">
                     {/* Left Sub-Column: Clinical Intake & Vitals Telemetry (5 cols) */}
-                    <div className="xl:col-span-5 space-y-4">
+                    <div className="xl:col-span-5 space-y-3">
                       {/* Intake & Chief Complaint Card */}
-                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3">
+                      <div className="bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-extrabold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
                             <Stethoscope className="h-3.5 w-3.5 text-[#F2052C]" /> Clinical Intake
                           </span>
                           <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
-                            {selected.type === "instant" ? "Instant Queue" : selected.slotTime ? `Slot: ${selected.slotTime}` : "Scheduled"}
+                            {selected.status === "Completed"
+                              ? "Consultation Completed"
+                              : selected.type === "instant"
+                              ? "Instant Queue"
+                              : selected.slotTime
+                              ? `Slot: ${selected.slotTime}`
+                              : "Scheduled"}
                           </Badge>
                         </div>
 
-                        <div className="p-3 rounded-[14px] bg-slate-50 border border-slate-100 space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            Chief Complaint
+                        <div className="p-2.5 rounded-[12px] bg-slate-50 border border-slate-100 space-y-0.5">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Primary Clinical Concern
                           </span>
                           <p className="text-xs font-bold text-slate-800 leading-snug">
                             {selected.condition}
                           </p>
-                        </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            Patient Case Notes / History
-                          </span>
-                          <p className="text-xs font-medium text-slate-600 leading-relaxed bg-slate-50/70 p-3 rounded-[14px] border border-slate-100 min-h-[55px]">
-                            {selected.notes || "Standard telehealth clinical consultation requested."}
-                          </p>
+                          {selected.notes &&
+                            selected.notes.trim() !== `Chief complaint: ${selected.condition}` &&
+                            selected.notes.trim() !== selected.condition && (
+                              <p className="text-[11px] font-medium text-slate-600 pt-1 border-t border-slate-200/60 mt-1 leading-relaxed">
+                                {selected.notes}
+                              </p>
+                            )}
                         </div>
                       </div>
 
                       {/* Clinical Vitals & Telemetry Card */}
-                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3">
+                      <div className="bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-2.5">
                         <div className="flex items-center justify-between">
                           <h4 className="text-xs font-extrabold text-[#14213D] flex items-center gap-1.5">
-                            <Activity className="h-4 w-4 text-[#F2052C]" />
-                            {selected.vitals.hasRealKioskData ? "Kiosk Hardware Telemetry" : "Patient Clinical Vitals"}
+                            <Activity className="h-3.5 w-3.5 text-[#F2052C]" />
+                            {selected.vitals.hasRealKioskData ? "Kiosk Telemetry" : "Clinical Vitals"}
                           </h4>
                           {selected.vitals.hasRealKioskData ? (
                             <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono flex items-center gap-1">
@@ -2621,48 +2692,48 @@ const Consultations: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2.5">
+                        <div className="grid grid-cols-2 gap-2">
                           {/* Blood Pressure */}
-                          <div className="p-3 rounded-[14px] bg-rose-50/50 border border-rose-100 space-y-0.5">
+                          <div className="p-2.5 rounded-[12px] bg-rose-50/50 border border-rose-100 space-y-0.5">
                             <span className="text-[10px] text-rose-600 font-bold block">Blood Pressure</span>
-                            <div className="text-base font-black text-slate-800 font-mono">
+                            <div className="text-sm font-black text-slate-800 font-mono">
                               {selected.vitals.bp || "-- / --"}
                             </div>
                             <span className="text-[9px] font-semibold text-rose-500">
-                              {selected.vitals.bp ? "mmHg" : "Remote / Unrecorded"}
+                              {selected.vitals.bp ? "mmHg" : "Unrecorded"}
                             </span>
                           </div>
 
                           {/* Heart Rate */}
-                          <div className="p-3 rounded-[14px] bg-emerald-50/50 border border-emerald-100 space-y-0.5">
+                          <div className="p-2.5 rounded-[12px] bg-emerald-50/50 border border-emerald-100 space-y-0.5">
                             <span className="text-[10px] text-emerald-600 font-bold block">Heart Rate</span>
-                            <div className="text-base font-black text-slate-800 font-mono">
+                            <div className="text-sm font-black text-slate-800 font-mono">
                               {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
                             </div>
                             <span className="text-[9px] font-semibold text-emerald-500">
-                              {selected.vitals.pulse ? "Normal Rhythm" : "Remote / Unrecorded"}
+                              {selected.vitals.pulse ? "Normal Rhythm" : "Unrecorded"}
                             </span>
                           </div>
 
                           {/* Body Temp */}
-                          <div className="p-3 rounded-[14px] bg-amber-50/50 border border-amber-100 space-y-0.5">
+                          <div className="p-2.5 rounded-[12px] bg-amber-50/50 border border-amber-100 space-y-0.5">
                             <span className="text-[10px] text-amber-600 font-bold block">Body Temp</span>
-                            <div className="text-base font-black text-slate-800 font-mono">
+                            <div className="text-sm font-black text-slate-800 font-mono">
                               {selected.vitals.temp || "--"}
                             </div>
                             <span className="text-[9px] font-semibold text-amber-500">
-                              {selected.vitals.temp ? "Sensor Synced" : "Remote / Unrecorded"}
+                              {selected.vitals.temp ? "Sensor Synced" : "Unrecorded"}
                             </span>
                           </div>
 
                           {/* Oxygen Saturation */}
-                          <div className="p-3 rounded-[14px] bg-cyan-50/50 border border-cyan-100 space-y-0.5">
+                          <div className="p-2.5 rounded-[12px] bg-cyan-50/50 border border-cyan-100 space-y-0.5">
                             <span className="text-[10px] text-cyan-600 font-bold block">Oxygen Saturation</span>
-                            <div className="text-base font-black text-slate-800 font-mono">
+                            <div className="text-sm font-black text-slate-800 font-mono">
                               {selected.vitals.spo2 || "--"}
                             </div>
                             <span className="text-[9px] font-semibold text-cyan-500">
-                              {selected.vitals.spo2 ? "SpO2 Level" : "Remote / Unrecorded"}
+                              {selected.vitals.spo2 ? "SpO2 Level" : "Unrecorded"}
                             </span>
                           </div>
                         </div>
@@ -2670,19 +2741,19 @@ const Consultations: React.FC = () => {
                     </div>
 
                     {/* Right Sub-Column: Patient Shared Health Reports & Attachments (7 cols) */}
-                    <div className="xl:col-span-7 bg-white rounded-[20px] border border-slate-200/80 p-4.5 shadow-xs space-y-3.5">
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="h-8.5 w-8.5 rounded-[12px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold shrink-0">
-                            <FileCheck2 className="h-4.5 w-4.5" />
+                    <div className="xl:col-span-7 bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-3">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded-[10px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold shrink-0">
+                            <FileCheck2 className="h-4 w-4" />
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               <h3 className="text-xs font-black text-[#14213D]">
                                 Shared Health Reports & Files
                               </h3>
                               {sharedReports.length > 0 && (
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold">
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
                                   {sharedReports.length} {sharedReports.length === 1 ? "file" : "files"}
                                 </span>
                               )}
@@ -2697,7 +2768,7 @@ const Consultations: React.FC = () => {
                           <Button
                             size="sm"
                             onClick={() => setDeclarationModalOpen(true)}
-                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[10px] text-[11px] font-bold h-7.5 px-2.5 flex items-center gap-1 shadow-xs"
+                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[8px] text-[10px] font-bold h-7 px-2.5 flex items-center gap-1 shadow-xs"
                           >
                             <Lock className="h-3 w-3" /> Unlock Records
                           </Button>
@@ -2709,42 +2780,42 @@ const Consultations: React.FC = () => {
                       </div>
 
                       {sharedReportsStatus === "declaration_required" ? (
-                        <div className="p-5 rounded-[18px] bg-amber-50/70 border border-amber-200/80 text-center space-y-2.5">
-                          <div className="h-9 w-9 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
-                            <Lock className="h-4.5 w-4.5" />
+                        <div className="p-4 rounded-[14px] bg-amber-50/70 border border-amber-200/80 text-center space-y-2">
+                          <div className="h-8 w-8 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
+                            <Lock className="h-4 w-4" />
                           </div>
-                          <div className="space-y-1">
+                          <div className="space-y-0.5">
                             <h4 className="text-xs font-extrabold text-amber-950">
                               Patient Medical History Locked (ABDM / NMC Compliance)
                             </h4>
-                            <p className="text-[11px] text-amber-800/80 max-w-sm mx-auto leading-relaxed">
-                              Under National Medical Commission (NMC) Telemedicine Practice Guidelines, you must accept the clinical compliance declaration to access and decrypt this patient's shared diagnostic records.
+                            <p className="text-[10px] text-amber-800/80 max-w-sm mx-auto leading-relaxed">
+                              Under National Medical Commission (NMC) Telemedicine Practice Guidelines, accept declaration to decrypt records.
                             </p>
                           </div>
                           <Button
                             size="sm"
                             onClick={() => setDeclarationModalOpen(true)}
-                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[10px] text-xs h-8 px-4 shadow-xs inline-flex items-center gap-1.5"
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[8px] text-xs h-7.5 px-3 shadow-xs inline-flex items-center gap-1.5"
                           >
                             <ShieldCheck className="h-3.5 w-3.5" /> Sign Compliance Declaration & Unlock
                           </Button>
                         </div>
                       ) : sharedReportsStatus === "loading" ? (
-                        <div className="p-8 text-center bg-slate-50/70 rounded-[18px] border border-slate-200/80 space-y-2">
-                          <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
+                        <div className="p-6 text-center bg-slate-50/70 rounded-[14px] border border-slate-200/80 space-y-1.5">
+                          <RefreshCw className="h-4 w-4 text-[#35B7C9] animate-spin mx-auto" />
                           <p className="text-xs font-bold text-slate-700">Verifying ABDM Consent & Loading Records...</p>
                         </div>
                       ) : sharedReports.length > 0 ? (
-                        <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                           {sharedReports.map((r) => (
                             <div
                               key={r.id}
-                              className="p-3.5 rounded-[16px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-2.5"
+                              className="p-3 rounded-[14px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-1.5"
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="h-8.5 w-8.5 rounded-[10px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-                                    <FileText className="h-4.5 w-4.5" />
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="h-7.5 w-7.5 rounded-[8px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                                    <FileText className="h-4 w-4" />
                                   </div>
                                   <div className="min-w-0">
                                     <h4 className="text-xs font-black text-[#14213D] leading-tight truncate">
@@ -2758,7 +2829,7 @@ const Consultations: React.FC = () => {
                                 <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
                               </div>
 
-                              <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50/80 p-2 rounded-[10px] border border-slate-100">
+                              <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50/80 p-1.5 rounded-[8px] border border-slate-100">
                                 {r.summary}
                               </p>
 
@@ -2773,7 +2844,7 @@ const Consultations: React.FC = () => {
                                       setPreviewReport(r);
                                     }
                                   }}
-                                  className="h-7.5 px-2.5 text-xs font-bold rounded-[8px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1.5"
+                                  className="h-7 px-2.5 text-xs font-bold rounded-[8px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1"
                                 >
                                   <ExternalLink className="h-3 w-3 text-[#35B7C9]" /> Inspect File
                                 </Button>
@@ -2792,7 +2863,7 @@ const Consultations: React.FC = () => {
                                       });
                                     }
                                   }}
-                                  className="h-7.5 px-2.5 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[8px] flex items-center gap-1"
+                                  className="h-7 px-2.5 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[8px] flex items-center gap-1"
                                 >
                                   <Download className="h-3 w-3" /> Download
                                 </Button>
@@ -2801,12 +2872,12 @@ const Consultations: React.FC = () => {
                           ))}
                         </div>
                       ) : (
-                        <div className="p-7 text-center bg-slate-50/70 rounded-[18px] border border-dashed border-slate-200/90 space-y-1.5">
-                          <div className="h-9 w-9 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-                            <FileText className="h-4.5 w-4.5" />
+                        <div className="p-6 text-center bg-slate-50/70 rounded-[14px] border border-dashed border-slate-200/90 space-y-1">
+                          <div className="h-8 w-8 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                            <FileText className="h-4 w-4" />
                           </div>
                           <p className="text-xs font-bold text-slate-700">No Patient Health Reports Shared</p>
-                          <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                          <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
                             The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this booking.
                           </p>
                         </div>
