@@ -66,7 +66,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/api-request";
 import { listBookings, updateBookingStatus } from "@/services/booking.service";
-import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
+import { getProfiles, createProfile } from "@/services/profile.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
@@ -399,25 +399,17 @@ const Consultations: React.FC = () => {
         ? profilesRes
         : profilesRes?.data || profilesRes?.profiles || [];
 
-      const profileIds = Array.from(
-        new Set(
-          bookingList
-            .map((b: any) => (typeof b.profileId === "string" ? b.profileId : b.profileId?._id))
-            .filter(Boolean)
-        )
-      ) as string[];
-
       const profileMap = new Map<string, any>();
-
-      await Promise.allSettled(
-        profileIds.map(async (pId) => {
-          try {
-            const pRes = await viewProfile(pId);
-            const prof = pRes?.data || pRes?.profile || pRes;
-            if (prof && prof.name) profileMap.set(pId, prof);
-          } catch {}
-        })
-      );
+      profileList.forEach((p: any) => {
+        const id = p._id || p.id;
+        if (id) profileMap.set(String(id), p);
+      });
+      bookingList.forEach((b: any) => {
+        if (b.profileId && typeof b.profileId === "object") {
+          const id = b.profileId._id || b.profileId.id;
+          if (id) profileMap.set(String(id), b.profileId);
+        }
+      });
 
       const realPatients: PatientRecord[] = [];
 

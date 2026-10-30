@@ -40,9 +40,6 @@ import {
   getDoctorAvailability,
 } from "@/services/doctor.service";
 import { listBookings } from "@/services/booking.service";
-import { viewProfile } from "@/services/profile.service";
-import { listReports } from "@/services/report.service";
-import { getSettlements } from "@/services/analytics.service";
 import { IncomingCallModal } from "@/components/dashboard/IncomingCallModal";
 import { useIncomingCallWatcher } from "@/hooks/useIncomingCallWatcher";
 import { DevicePermissionsModal } from "@/components/shared/DevicePermissionsModal";
@@ -218,28 +215,15 @@ const DoctorDashboard = () => {
         console.debug("Availability note:", e);
       }
 
-      // 2. Fetch Real Bookings & Profiles
-      const [bookingsRes, reportsRes, settlementsRes] = await Promise.all([
-        listBookings().catch(() => null),
-        listReports().catch(() => null),
-        getSettlements().catch(() => null),
-      ]);
+      // 2. Fetch Real Bookings
+      const bookingsRes = await listBookings().catch(() => null);
 
       const bookingList = Array.isArray(bookingsRes)
         ? bookingsRes
         : bookingsRes?.data || bookingsRes?.bookings || [];
 
-      // Calculate Earnings
-      if (settlementsRes?.data) {
-        const total = settlementsRes.data.reduce(
-          (sum: number, s: any) => sum + (s.netAmount || s.amount || 0),
-          0
-        );
-        setStats((prev) => ({
-          ...prev,
-          thisMonthEarnings: `₹${total.toLocaleString("en-IN")}`,
-        }));
-      } else if (bookingList.length > 0) {
+      // Calculate Earnings from bookings
+      if (bookingList.length > 0) {
         const fee = Number(consultFee) || 500;
         const estTotal = bookingList.filter(
           (b: any) => b.status === "Completed" || b.status === "confirmed"
@@ -250,34 +234,22 @@ const DoctorDashboard = () => {
         }));
       }
 
-      // Calculate Reports
-      const reportList = Array.isArray(reportsRes)
-        ? reportsRes
-        : reportsRes?.reports || reportsRes?.data || [];
-      setReports(reportList);
+      // Count patient reports attached to bookings
+      let totalReportsCount = 0;
+      bookingList.forEach((b: any) => {
+        if (Array.isArray(b.reports)) totalReportsCount += b.reports.length;
+      });
+      setReports([]);
 
       // Process Appointments
       const formattedAppointments: AppointmentItem[] = [];
-      const profileIds = Array.from(
-        new Set(
-          bookingList
-            .map((b: any) => (typeof b.profileId === "string" ? b.profileId : b.profileId?._id))
-            .filter(Boolean)
-        )
-      ) as string[];
-
       const profileMap = new Map<string, any>();
-      await Promise.allSettled(
-        profileIds.map(async (pId) => {
-          try {
-            const pRes = await viewProfile(pId);
-            const prof = pRes?.data || pRes?.profile || pRes;
-            if (prof && prof.name) profileMap.set(pId, prof);
-          } catch (e) {
-            console.debug("Could not resolve profile:", pId, e);
-          }
-        })
-      );
+      bookingList.forEach((b: any) => {
+        if (b.profileId && typeof b.profileId === "object") {
+          const id = b.profileId._id || b.profileId.id;
+          if (id) profileMap.set(String(id), b.profileId);
+        }
+      });
 
       bookingList.forEach((b: any, idx: number) => {
         const pIdStr = typeof b.profileId === "string" ? b.profileId : b.profileId?._id;

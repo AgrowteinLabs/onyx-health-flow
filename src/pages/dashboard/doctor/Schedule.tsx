@@ -37,7 +37,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { listBookings, createBooking, createDoctorBooking } from "@/services/booking.service";
-import { viewProfile } from "@/services/profile.service";
 import { viewUser } from "@/services/user.service";
 import { updateDoctorAvailability, getDoctorAvailability } from "@/services/doctor.service";
 
@@ -242,26 +241,13 @@ const Schedule = () => {
         : bookingsRes?.data || bookingsRes?.bookings || [];
 
       if (bookingsList.length > 0) {
-        const profileIds = Array.from(
-          new Set(
-            bookingsList
-              .map((b: any) => (typeof b.profileId === "string" ? b.profileId : b.profileId?._id))
-              .filter(Boolean)
-          )
-        ) as string[];
-
         const profileMap = new Map<string, any>();
-        await Promise.allSettled(
-          profileIds.map(async (pId) => {
-            try {
-              const pRes = await viewProfile(pId);
-              const prof = pRes?.data || pRes?.profile || pRes;
-              if (prof && prof.name) profileMap.set(pId, prof);
-            } catch (e) {
-              console.debug("Could not resolve profile:", pId, e);
-            }
-          })
-        );
+        bookingsList.forEach((b: any) => {
+          if (b.profileId && typeof b.profileId === "object") {
+            const id = b.profileId._id || b.profileId.id;
+            if (id) profileMap.set(String(id), b.profileId);
+          }
+        });
 
         const mapped: AppointmentSlot[] = bookingsList.map((b: any, index: number) => {
           const pIdStr = typeof b.profileId === "string" ? b.profileId : b.profileId?._id;
