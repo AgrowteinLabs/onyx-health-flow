@@ -132,18 +132,54 @@ export const getAgoraVideoToken = async (bookingId: string) => {
   });
 };
 
+/**
+ * Fetch patient shared reports for a booking under ABDM / NMC guidelines.
+ * If doctor declaration is required, the server returns HTTP 403 with declaration_required.
+ */
 export const getSharedReports = async (bookingId: string) => {
-  return apiRequest(`/api/booking/shared-reports/${bookingId}`, {
-    method: "GET",
-  });
+  try {
+    const res = await apiRequest(`/api/booking/shared-reports/${bookingId}`, {
+      method: "GET",
+      silent: true,
+    });
+    return res;
+  } catch (err: any) {
+    if (
+      err?.data &&
+      (err.data.status === "declaration_required" ||
+        err.data.consentRequired ||
+        err.data.doctorAgreed === false)
+    ) {
+      return err.data;
+    }
+    if (err?.status === 403) {
+      return {
+        status: "declaration_required",
+        consentRequired: true,
+        doctorAgreed: false,
+        declarationText:
+          err?.data?.declarationText ||
+          "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential.",
+        message:
+          err?.data?.message ||
+          "Doctor declaration and agreement required prior to accessing patient medical records.",
+      };
+    }
+    throw err;
+  }
 };
 
+/**
+ * Doctor submits signed declaration to decrypt and access patient reports.
+ */
 export const agreeReportAccess = async (bookingId: string, declaration?: string) => {
   return apiRequest(`/api/booking/agree-report-access/${bookingId}`, {
     method: "POST",
     data: {
       agreed: true,
-      declaration: declaration || "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential.",
+      declaration:
+        declaration ||
+        "I declare that I am accessing this patient's medical records solely for the clinical purpose of this telehealth consultation.",
     },
   });
-};
+};

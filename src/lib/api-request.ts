@@ -168,7 +168,11 @@ export const apiRequest = async <T = any>(
         throw new Error("Network error. Please check server connection.");
       }
 
-      throw new Error(message);
+      const apiError: any = new Error(message);
+      apiError.status = status;
+      apiError.data = error.response?.data;
+      apiError.response = error.response;
+      throw apiError;
     }
 
     console.error("💥 Unexpected error:", error);

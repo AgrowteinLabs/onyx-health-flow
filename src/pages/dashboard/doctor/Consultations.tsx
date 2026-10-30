@@ -65,9 +65,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/api-request";
-import { listBookings, updateBookingStatus, getBookingReports } from "@/services/booking.service";
+import { listBookings, updateBookingStatus } from "@/services/booking.service";
 import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
-import { listReports, listReportsByProfile, listReportsByUser } from "@/services/report.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
@@ -299,6 +298,9 @@ const Consultations: React.FC = () => {
   const [declarationModalOpen, setDeclarationModalOpen] = useState(false);
   const [agreeingDeclaration, setAgreeingDeclaration] = useState(false);
   const [agreementChecked, setAgreementChecked] = useState(false);
+  const [declarationText, setDeclarationText] = useState(
+    "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential."
+  );
 
   // Document Preview Modal
   const [previewReport, setPreviewReport] = useState<HealthReportItem | null>(null);
@@ -384,10 +386,9 @@ const Consultations: React.FC = () => {
   const fetchConsultationsData = useCallback(async () => {
     setLoading(true);
     try {
-      const [bookingsRes, profilesRes, reportsRes] = await Promise.all([
+      const [bookingsRes, profilesRes] = await Promise.all([
         listBookings().catch(() => null),
         getProfiles().catch(() => null),
-        listReports().catch(() => null),
       ]);
 
       const bookingList = Array.isArray(bookingsRes)
@@ -398,10 +399,6 @@ const Consultations: React.FC = () => {
         ? profilesRes
         : profilesRes?.data || profilesRes?.profiles || [];
 
-      const reportList = Array.isArray(reportsRes)
-        ? reportsRes
-        : reportsRes?.reports || reportsRes?.data || [];
-
       const profileIds = Array.from(
         new Set(
           bookingList
@@ -410,52 +407,17 @@ const Consultations: React.FC = () => {
         )
       ) as string[];
 
-      const userIds = Array.from(
-        new Set(
-          bookingList
-            .map((b: any) => (typeof b.userId === "string" ? b.userId : b.userId?._id))
-            .filter(Boolean)
-        )
-      ) as string[];
-
-      const bookingIds = Array.from(
-        new Set(bookingList.map((b: any) => b._id).filter(Boolean))
-      ) as string[];
-
       const profileMap = new Map<string, any>();
-      const profileReportMap = new Map<string, any[]>();
-      const userReportMap = new Map<string, any[]>();
-      const bookingReportMap = new Map<string, any[]>();
 
-      await Promise.allSettled([
-        ...profileIds.map(async (pId) => {
+      await Promise.allSettled(
+        profileIds.map(async (pId) => {
           try {
             const pRes = await viewProfile(pId);
             const prof = pRes?.data || pRes?.profile || pRes;
             if (prof && prof.name) profileMap.set(pId, prof);
           } catch {}
-
-          try {
-            const rRes = await listReportsByProfile(pId);
-            const reps = Array.isArray(rRes) ? rRes : rRes?.reports || [];
-            if (reps.length > 0) profileReportMap.set(pId, reps);
-          } catch {}
-        }),
-        ...userIds.map(async (uId) => {
-          try {
-            const rRes = await listReportsByUser(uId);
-            const reps = Array.isArray(rRes) ? rRes : rRes?.reports || [];
-            if (reps.length > 0) userReportMap.set(uId, reps);
-          } catch {}
-        }),
-        ...bookingIds.map(async (bId) => {
-          try {
-            const bRes = await getBookingReports(bId);
-            const reps = Array.isArray(bRes?.reports) ? bRes.reports : [];
-            if (reps.length > 0) bookingReportMap.set(bId, reps);
-          } catch {}
-        }),
-      ]);
+        })
+      );
 
       const realPatients: PatientRecord[] = [];
 
@@ -463,9 +425,6 @@ const Consultations: React.FC = () => {
       if (bookingList.length > 0) {
         bookingList.forEach((b: any, index: number) => {
           const pIdStr = typeof b.profileId === "string" ? b.profileId : b.profileId?._id;
-          const uIdStr = typeof b.userId === "string" ? b.userId : b.userId?._id;
-          const bIdStr = b._id;
-
           const fetchedProfile = pIdStr ? profileMap.get(pIdStr) : null;
           const pName =
             fetchedProfile?.name ||
@@ -497,33 +456,10 @@ const Consultations: React.FC = () => {
             formattedPhone = fetchedProfile.phone;
           }
 
-          // Gather all authentic candidate reports across booking, profile, user, and global report store
-          const rawCandidateReports: any[] = [
-            ...(Array.isArray(b.reports) ? b.reports : []),
-            ...(bIdStr && bookingReportMap.has(bIdStr) ? bookingReportMap.get(bIdStr)! : []),
-            ...(pIdStr && profileReportMap.has(pIdStr) ? profileReportMap.get(pIdStr)! : []),
-            ...(uIdStr && userReportMap.has(uIdStr) ? userReportMap.get(uIdStr)! : []),
-            ...reportList.filter((r: any) => {
-              const rProfileId = typeof r.profileId === "string" ? r.profileId : r.profile?._id;
-              const rUserId = typeof r.userId === "string" ? r.userId : r.user?._id;
-              return (pIdStr && rProfileId === pIdStr) || (uIdStr && rUserId === uIdStr);
-            }),
-          ];
-
-          // Deduplicate reports by record ID
-          const seenReportKeys = new Set<string>();
-          const uniqueCandidateReports: any[] = [];
-          for (const r of rawCandidateReports) {
-            const key = String(r._id || r.id || r.reportCode || r.fileUrl || Math.random());
-            if (!seenReportKeys.has(key)) {
-              seenReportKeys.add(key);
-              uniqueCandidateReports.push(r);
-            }
-          }
-
-          const patientReports: HealthReportItem[] = uniqueCandidateReports.map((r, rIdx) =>
-            mapRawReportToItem(r, rIdx)
-          );
+          // Reports directly included in booking payload if any
+          const patientReports: HealthReportItem[] = Array.isArray(b.reports)
+            ? b.reports.map((r, rIdx) => mapRawReportToItem(r, rIdx))
+            : [];
 
           // Real Hardware IoT Telemetry detection:
           // Only flag as live synced if actual measured vitals values exist in the database.
@@ -598,8 +534,6 @@ const Consultations: React.FC = () => {
         profileList.forEach((p: any, index: number) => {
           const pName = p.name || `Patient ${index + 1}`;
           if (!realPatients.some((rp) => rp.name.toLowerCase() === pName.toLowerCase())) {
-            const profReportsRaw = (p._id && profileReportMap.get(p._id)) || [];
-            const profReports = profReportsRaw.map((r, rIdx) => mapRawReportToItem(r, rIdx));
             const profHasVitals = Boolean(p.vitals && (p.vitals.bp || p.vitals.pulse || p.vitals.temp));
 
             realPatients.push({
@@ -628,7 +562,7 @@ const Consultations: React.FC = () => {
                 hasRealKioskData: profHasVitals,
               },
               phone: p.phone,
-              reports: profReports,
+              reports: [],
             });
           }
         });
@@ -675,31 +609,54 @@ const Consultations: React.FC = () => {
     if (selected) {
       setClinicalDiagnosis(selected.condition || "Clinical Telehealth Evaluation");
       setClinicalNotes(selected.notes || "");
-      if (selected.reports && selected.reports.length > 0) {
-        setSharedReports(selected.reports);
-        setSharedReportsStatus("unlocked");
-      } else {
+      if (selected.bookingId) {
         fetchSharedReports(selected.bookingId);
+      } else {
+        setSharedReports(selected.reports || []);
+        setSharedReportsStatus("not_shared");
       }
     }
-  }, [selected]);
+  }, [selected?.id, selected?.bookingId]);
 
   /* ============================================================
-     ABDM / NMC SHARED REPORTS & PRIVACY DECLARATION
+     ABDM / NMC SHARED REPORTS & PRIVACY DECLARATION (Section 3.8)
   ============================================================ */
   const fetchSharedReports = async (bookingId?: string) => {
     const targetBookingId = bookingId || selected?.bookingId;
     if (!targetBookingId) {
-      setSharedReportsStatus("unlocked");
+      setSharedReports(selected?.reports || []);
+      setSharedReportsStatus("not_shared");
       return;
     }
 
     setSharedReportsStatus("loading");
     try {
-      // 1. Check official booking reports endpoint
-      const bookingReportsRes = await getBookingReports(targetBookingId).catch(() => null);
-      if (bookingReportsRes && Array.isArray(bookingReportsRes.reports) && bookingReportsRes.reports.length > 0) {
-        const mapped: HealthReportItem[] = bookingReportsRes.reports.map((r: any, idx: number) =>
+      const res = await getSharedReports(targetBookingId);
+
+      // Case 1: Doctor declaration required (Server returns HTTP 403)
+      if (
+        res?.status === "declaration_required" ||
+        res?.consentRequired === true ||
+        res?.doctorAgreed === false
+      ) {
+        if (res.declarationText) {
+          setDeclarationText(res.declarationText);
+        }
+        setSharedReports([]);
+        setSharedReportsStatus("declaration_required");
+        return;
+      }
+
+      // Case 2: Patient did not share reports (scope: "none")
+      if (res?.scope === "none" || (res?.reports && res.reports.length === 0)) {
+        setSharedReports([]);
+        setSharedReportsStatus("not_shared");
+        return;
+      }
+
+      // Case 3: Doctor has agreed (HTTP 200 with decrypted reports)
+      if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
+        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) =>
           mapRawReportToItem(r, idx)
         );
         setSharedReports(mapped);
@@ -707,23 +664,17 @@ const Consultations: React.FC = () => {
         return;
       }
 
-      // 2. ABDM declaration check / shared reports
-      const res = await getSharedReports(targetBookingId);
-      if (res?.declarationRequired) {
-        setSharedReportsStatus("declaration_required");
-      } else if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
-        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) =>
-          mapRawReportToItem(r, idx)
-        );
-        setSharedReports(mapped);
+      if (selected?.reports && selected.reports.length > 0) {
+        setSharedReports(selected.reports);
         setSharedReportsStatus("unlocked");
       } else {
-        setSharedReports(selected?.reports || []);
-        setSharedReportsStatus("unlocked");
+        setSharedReports([]);
+        setSharedReportsStatus("not_shared");
       }
-    } catch {
+    } catch (err) {
+      console.warn("Could not retrieve shared reports:", err);
       setSharedReports(selected?.reports || []);
-      setSharedReportsStatus("unlocked");
+      setSharedReportsStatus("not_shared");
     }
   };
 
@@ -742,13 +693,22 @@ const Consultations: React.FC = () => {
 
     setAgreeingDeclaration(true);
     try {
-      await agreeReportAccess(targetBookingId);
-      toast({ title: "Records Decrypted", description: "Patient history unlocked for this encounter." });
+      await agreeReportAccess(
+        targetBookingId,
+        "I declare that I am accessing this patient's medical records solely for the clinical purpose of this telehealth consultation."
+      );
+      toast({
+        title: "Records Decrypted & Unlocked",
+        description: "Patient diagnostic history verified and accessible under ABDM.",
+      });
       setDeclarationModalOpen(false);
-      fetchSharedReports(targetBookingId);
-    } catch {
-      setDeclarationModalOpen(false);
-      setSharedReportsStatus("unlocked");
+      await fetchSharedReports(targetBookingId);
+    } catch (err: any) {
+      toast({
+        title: "Agreement Recording Failed",
+        description: err.message || "Failed to record compliance declaration.",
+        variant: "destructive",
+      });
     } finally {
       setAgreeingDeclaration(false);
     }
@@ -2021,17 +1981,49 @@ const Consultations: React.FC = () => {
                           </h4>
                           <p className="text-[10px] text-slate-400">Review lab tests, radiology, and files during the active call</p>
                         </div>
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                          {sharedReports.length} Files
-                        </Badge>
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[10px] text-[10px] font-bold h-7 px-2.5 flex items-center gap-1 shadow-xs"
+                          >
+                            <Lock className="h-3 w-3" /> Unlock
+                          </Button>
+                        ) : (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                            {sharedReports.length} Files
+                          </Badge>
+                        )}
                       </div>
 
                       <div className="space-y-2.5">
-                        {sharedReports.length === 0 ? (
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <div className="p-6 text-center bg-amber-50/70 rounded-[18px] border border-amber-200/80 space-y-2.5">
+                            <div className="h-10 w-10 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center">
+                              <Lock className="h-5 w-5" />
+                            </div>
+                            <p className="text-xs font-bold text-amber-950">ABDM Telemedicine Declaration Required</p>
+                            <p className="text-[10px] text-amber-800/80 leading-relaxed max-w-xs mx-auto">
+                              Sign NMC compliance declaration to view and pin this patient's shared reports during the call.
+                            </p>
+                            <Button
+                              size="sm"
+                              onClick={() => setDeclarationModalOpen(true)}
+                              className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[10px] text-[11px] h-8 px-4 inline-flex items-center gap-1.5 shadow-xs"
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" /> Sign Declaration
+                            </Button>
+                          </div>
+                        ) : sharedReportsStatus === "loading" ? (
+                          <div className="p-8 text-center bg-slate-50/70 rounded-[18px] border border-slate-200/80 space-y-2">
+                            <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
+                            <p className="text-xs font-semibold text-slate-600">Checking patient consent & records...</p>
+                          </div>
+                        ) : sharedReports.length === 0 ? (
                           <div className="p-8 text-center bg-slate-50 rounded-[18px] border border-dashed border-slate-200">
                             <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                            <p className="text-xs font-bold text-slate-600">No health reports uploaded</p>
-                            <p className="text-[10px] text-slate-400 mt-0.5">Patient has no attached diagnostic files.</p>
+                            <p className="text-xs font-bold text-slate-600">No health reports shared</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">Patient has not attached diagnostic files for this consultation.</p>
                           </div>
                         ) : (
                           sharedReports.map((r) => (
@@ -2619,18 +2611,44 @@ const Consultations: React.FC = () => {
                         <Button
                           size="sm"
                           onClick={() => setDeclarationModalOpen(true)}
-                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8"
+                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8 flex items-center gap-1 shadow-xs"
                         >
-                          <Lock className="h-3 w-3 mr-1" /> Unlock Records
+                          <Lock className="h-3 w-3" /> Unlock Records
                         </Button>
-                      ) : (
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
-                          <Unlock className="h-3 w-3 mr-1 text-emerald-600" /> NMC / ABDM Verified
+                      ) : sharedReportsStatus === "unlocked" && sharedReports.length > 0 ? (
+                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1">
+                          <Unlock className="h-3 w-3 text-emerald-600" /> NMC / ABDM Verified
                         </Badge>
-                      )}
+                      ) : null}
                     </div>
 
-                    {sharedReports.length > 0 ? (
+                    {sharedReportsStatus === "declaration_required" ? (
+                      <div className="p-7 rounded-[20px] bg-amber-50/70 border border-amber-200/80 text-center space-y-3">
+                        <div className="h-11 w-11 rounded-2xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
+                          <Lock className="h-5 w-5" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-extrabold text-amber-950">
+                            Patient Medical History Locked (ABDM / NMC Compliance)
+                          </h4>
+                          <p className="text-xs text-amber-800/80 max-w-md mx-auto leading-relaxed">
+                            Under National Medical Commission (NMC) Telemedicine Practice Guidelines, you must accept the clinical compliance declaration to access and decrypt this patient's shared diagnostic records.
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => setDeclarationModalOpen(true)}
+                          className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[12px] text-xs h-9 px-5 shadow-sm inline-flex items-center gap-1.5"
+                        >
+                          <ShieldCheck className="h-4 w-4" /> Sign Compliance Declaration & Unlock
+                        </Button>
+                      </div>
+                    ) : sharedReportsStatus === "loading" ? (
+                      <div className="p-8 text-center bg-slate-50/70 rounded-[20px] border border-slate-200/80 space-y-2">
+                        <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
+                        <p className="text-xs font-bold text-slate-700">Verifying ABDM Consent & Loading Records...</p>
+                      </div>
+                    ) : sharedReports.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                         {sharedReports.map((r) => (
                           <div
@@ -2701,7 +2719,7 @@ const Consultations: React.FC = () => {
                         <div className="h-10 w-10 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
                           <FileText className="h-5 w-5" />
                         </div>
-                        <p className="text-xs font-bold text-slate-700">No Patient Health Reports Attached</p>
+                        <p className="text-xs font-bold text-slate-700">No Patient Health Reports Shared</p>
                         <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
                           The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this consultation.
                         </p>
@@ -2957,10 +2975,8 @@ const Consultations: React.FC = () => {
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
-            <div className="p-3.5 rounded-[16px] bg-slate-50 border border-slate-200/80 text-xs text-slate-700 leading-relaxed">
-              In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare
-              that I will access and use this patient's medical records strictly for the purpose of this clinical
-              consultation. I agree to keep all patient health information confidential.
+            <div className="p-3.5 rounded-[16px] bg-slate-50 border border-slate-200/80 text-xs text-slate-700 leading-relaxed font-medium">
+              {declarationText}
             </div>
 
             <div className="flex items-center gap-2.5">
@@ -2985,9 +3001,17 @@ const Consultations: React.FC = () => {
               <Button
                 onClick={handleAgreeDeclaration}
                 disabled={!agreementChecked || agreeingDeclaration}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-[14px] h-9 px-4 text-xs font-bold shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-[14px] h-9 px-4 text-xs font-bold shadow-sm flex items-center gap-1.5"
               >
-                {agreeingDeclaration ? "Decrypting…" : "Accept & Unlock"}
+                {agreeingDeclaration ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Decrypting...
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-3.5 w-3.5" /> Accept & Unlock
+                  </>
+                )}
               </Button>
             </div>
           </div>
