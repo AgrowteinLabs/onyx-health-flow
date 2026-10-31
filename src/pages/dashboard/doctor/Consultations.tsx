@@ -193,8 +193,8 @@ const Consultations: React.FC = () => {
   // Phase 3: "summary" (Post-Consultation Signed Slip & Next Patient Transition)
   const [workflowPhase, setWorkflowPhase] = useState<"queue" | "encounter" | "summary">("queue");
 
-  // In-call right panel tab: "chart" (SOAP & Rx) | "reports" (Patient Health Reports) | "vitals" (Telemetry)
-  const [inCallTab, setInCallTab] = useState<"chart" | "reports" | "vitals">("chart");
+  // In-call right panel tab: "chart" (SOAP & Rx) | "reports" (Patient Health Reports)
+  const [inCallTab, setInCallTab] = useState<"chart" | "reports">("chart");
 
   // Clinical data states
   const [patients, setPatients] = useState<PatientRecord[]>([]);
@@ -1765,18 +1765,6 @@ const Consultations: React.FC = () => {
                         {sharedReports.length}
                       </span>
                     </button>
-
-                    <button
-                      onClick={() => setInCallTab("vitals")}
-                      className={`flex-1 py-2.5 rounded-[14px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                        inCallTab === "vitals"
-                          ? "bg-white text-[#14213D] shadow-sm font-black"
-                          : "hover:text-[#14213D]"
-                      }`}
-                    >
-                      <HeartPulse className="h-3.5 w-3.5 text-rose-500" />
-                      <span>Telemetry</span>
-                    </button>
                   </div>
 
                   {/* TAB 1: SOAP CHART & DIGITAL RX PAD */}
@@ -2117,73 +2105,6 @@ const Consultations: React.FC = () => {
                             </div>
                           ))
                         )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TAB 3: KIOSK IOT VITALS TELEMETRY HUD */}
-                  {inCallTab === "vitals" && (
-                    <div className="bg-white rounded-[24px] border border-slate-200/80 p-5 shadow-sm space-y-4 animate-fadeIn">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <HeartPulse className="h-3.5 w-3.5 text-rose-500" /> Kiosk Screening Telemetry
-                        </span>
-                        {selected.vitals.hasRealKioskData ? (
-                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">
-                            Verified IoT Link
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">
-                            Remote Patient (No Kiosk Scan)
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3 text-center">
-                        <div className="p-3.5 rounded-[18px] bg-rose-50/60 border border-rose-100">
-                          <div className="text-[10px] font-bold text-rose-600">Blood Pressure</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
-                            {selected.vitals.bp || "-- / --"}
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-semibold">
-                            {selected.vitals.bp ? "mmHg (Norm: 120/80)" : "Not recorded (Remote)"}
-                          </span>
-                        </div>
-
-                        <div className="p-3.5 rounded-[18px] bg-emerald-50/60 border border-emerald-100">
-                          <div className="text-[10px] font-bold text-emerald-600">Heart Rate</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
-                            {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-semibold">
-                            {selected.vitals.pulse ? "Normal Sinus Rhythm" : "Not recorded (Remote)"}
-                          </span>
-                        </div>
-
-                        <div className="p-3.5 rounded-[18px] bg-amber-50/60 border border-amber-100">
-                          <div className="text-[10px] font-bold text-amber-600">Body Temp</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
-                            {selected.vitals.temp || "--"}
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-semibold">
-                            {selected.vitals.temp ? "Thermal Sensor" : "Not recorded (Remote)"}
-                          </span>
-                        </div>
-
-                        <div className="p-3.5 rounded-[18px] bg-cyan-50/60 border border-cyan-100">
-                          <div className="text-[10px] font-bold text-cyan-600">Oxygen Saturation</div>
-                          <div className="text-xl font-black text-slate-800 font-mono mt-0.5">
-                            {selected.vitals.spo2 || "--"}
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-semibold">
-                            {selected.vitals.spo2 ? "SpO2 Level" : "Not recorded (Remote)"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-3.5 rounded-[16px] bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs">
-                        <span className="text-slate-500 font-medium">Registered Patient Contact:</span>
-                        <span className="font-mono font-bold text-slate-800">{selected.phone || "Kiosk Direct Intake"}</span>
                       </div>
                     </div>
                   )}
@@ -2627,12 +2548,11 @@ const Consultations: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Balanced 2-Column Clinical Dossier Subgrid (Left: Intake & Telemetry | Right: Patient Shared Reports) */}
-                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 items-start">
-                    {/* Left Sub-Column: Clinical Intake & Vitals Telemetry (5 cols) */}
+                  {/* Balanced 2-Column Clinical Dossier (Left: Intake & Details | Right: Patient Shared Reports) */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+                    {/* Left Sub-Column: Clinical Intake & Consultation Context (5 cols) */}
                     <div className="xl:col-span-5 space-y-3">
-                      {/* Intake & Chief Complaint Card */}
-                      <div className="bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-2">
+                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4 shadow-xs space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-extrabold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
                             <Stethoscope className="h-3.5 w-3.5 text-[#F2052C]" /> Clinical Intake
@@ -2648,87 +2568,50 @@ const Consultations: React.FC = () => {
                           </Badge>
                         </div>
 
-                        <div className="p-2.5 rounded-[12px] bg-slate-50 border border-slate-100 space-y-0.5">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                        <div className="p-3 rounded-[14px] bg-slate-50 border border-slate-100 space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                             Primary Clinical Concern
                           </span>
                           <p className="text-xs font-bold text-slate-800 leading-snug">
                             {selected.condition}
                           </p>
-                          {selected.notes &&
-                            selected.notes.trim() !== `Chief complaint: ${selected.condition}` &&
-                            selected.notes.trim() !== selected.condition && (
-                              <p className="text-[11px] font-medium text-slate-600 pt-1 border-t border-slate-200/60 mt-1 leading-relaxed">
-                                {selected.notes}
-                              </p>
-                            )}
                         </div>
-                      </div>
 
-                      {/* Clinical Vitals & Telemetry Card */}
-                      <div className="bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-extrabold text-[#14213D] flex items-center gap-1.5">
-                            <Activity className="h-3.5 w-3.5 text-[#F2052C]" />
-                            {selected.vitals.hasRealKioskData ? "Kiosk Telemetry" : "Clinical Vitals"}
-                          </h4>
-                          {selected.vitals.hasRealKioskData ? (
-                            <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                              Hardware Synced
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium">
-                              Remote Telehealth
-                            </Badge>
+                        <div className="p-3 rounded-[14px] bg-slate-50/80 border border-slate-100 space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-slate-500 font-medium">
+                            <span>Consultation Mode:</span>
+                            <span className="font-bold text-[#14213D]">
+                              {selected.type === "instant" ? "Instant Video" : "Scheduled Telehealth"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-500 font-medium">
+                            <span>Patient Contact:</span>
+                            <span className="font-mono font-bold text-slate-800">
+                              {selected.phone || "Not specified"}
+                            </span>
+                          </div>
+                          {selected.bookingId && (
+                            <div className="flex items-center justify-between text-slate-500 font-medium">
+                              <span>Booking Reference:</span>
+                              <span className="font-mono text-slate-600">
+                                #{String(selected.bookingId).slice(-6)}
+                              </span>
+                            </div>
                           )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                          {/* Blood Pressure */}
-                          <div className="p-2.5 rounded-[12px] bg-rose-50/50 border border-rose-100 space-y-0.5">
-                            <span className="text-[10px] text-rose-600 font-bold block">Blood Pressure</span>
-                            <div className="text-sm font-black text-slate-800 font-mono">
-                              {selected.vitals.bp || "-- / --"}
+                        {selected.notes &&
+                          selected.notes.trim() !== `Chief complaint: ${selected.condition}` &&
+                          selected.notes.trim() !== selected.condition && (
+                            <div className="space-y-1 pt-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                Patient Notes / Remarks
+                              </span>
+                              <p className="text-[11px] font-medium text-slate-600 bg-slate-50/70 p-2.5 rounded-[12px] border border-slate-100 leading-relaxed">
+                                {selected.notes}
+                              </p>
                             </div>
-                            <span className="text-[9px] font-semibold text-rose-500">
-                              {selected.vitals.bp ? "mmHg" : "Unrecorded"}
-                            </span>
-                          </div>
-
-                          {/* Heart Rate */}
-                          <div className="p-2.5 rounded-[12px] bg-emerald-50/50 border border-emerald-100 space-y-0.5">
-                            <span className="text-[10px] text-emerald-600 font-bold block">Heart Rate</span>
-                            <div className="text-sm font-black text-slate-800 font-mono">
-                              {selected.vitals.pulse ? `${selected.vitals.pulse} bpm` : "-- bpm"}
-                            </div>
-                            <span className="text-[9px] font-semibold text-emerald-500">
-                              {selected.vitals.pulse ? "Normal Rhythm" : "Unrecorded"}
-                            </span>
-                          </div>
-
-                          {/* Body Temp */}
-                          <div className="p-2.5 rounded-[12px] bg-amber-50/50 border border-amber-100 space-y-0.5">
-                            <span className="text-[10px] text-amber-600 font-bold block">Body Temp</span>
-                            <div className="text-sm font-black text-slate-800 font-mono">
-                              {selected.vitals.temp || "--"}
-                            </div>
-                            <span className="text-[9px] font-semibold text-amber-500">
-                              {selected.vitals.temp ? "Sensor Synced" : "Unrecorded"}
-                            </span>
-                          </div>
-
-                          {/* Oxygen Saturation */}
-                          <div className="p-2.5 rounded-[12px] bg-cyan-50/50 border border-cyan-100 space-y-0.5">
-                            <span className="text-[10px] text-cyan-600 font-bold block">Oxygen Saturation</span>
-                            <div className="text-sm font-black text-slate-800 font-mono">
-                              {selected.vitals.spo2 || "--"}
-                            </div>
-                            <span className="text-[9px] font-semibold text-cyan-500">
-                              {selected.vitals.spo2 ? "SpO2 Level" : "Unrecorded"}
-                            </span>
-                          </div>
-                        </div>
+                          )}
                       </div>
                     </div>
 
