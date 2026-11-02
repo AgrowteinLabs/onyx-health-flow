@@ -48,6 +48,10 @@ import {
   FileCheck2,
   Share2,
   ZoomIn,
+  Eye,
+  Trash2,
+  Minimize2,
+  SplitSquareVertical,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -61,9 +65,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/api-request";
-import { listBookings, updateBookingStatus, getBookingReports } from "@/services/booking.service";
-import { getProfiles, createProfile, viewProfile } from "@/services/profile.service";
-import { listReports, listReportsByProfile } from "@/services/report.service";
+import { listBookings, updateBookingStatus } from "@/services/booking.service";
+import { getProfiles, createProfile } from "@/services/profile.service";
 import { createPrescription, getSharedReports, agreeReportAccess, completeBooking } from "@/services/doctor.service";
 import AgoraRTC, { IAgoraRTCClient, ICameraVideoTrack, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng";
 import { openPrescriptionPdf } from "@/utils/prescriptionPdf";
@@ -96,11 +99,12 @@ export interface PatientRecord {
   avatar: string;
   notes: string;
   vitals: {
-    bp: string;
-    temp: string;
-    pulse: number | string;
-    spo2?: string;
+    bp: string | null;
+    temp: string | null;
+    pulse: number | string | null;
+    spo2?: string | null;
     bmi?: string;
+    hasRealKioskData: boolean;
   };
   bookingId?: string;
   phone?: string;
@@ -108,6 +112,43 @@ export interface PatientRecord {
   slotTime?: string;
   reports?: HealthReportItem[];
 }
+
+export interface PrescriptionMedication {
+  id: string;
+  name: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+  instructions: string;
+}
+
+const COMMON_DIAGNOSES = [
+  "Acute Viral URTI",
+  "Essential Hypertension",
+  "Type 2 Diabetes Mellitus",
+  "Acute Gastroenteritis",
+  "Allergic Rhinitis",
+  "Migraine Headache",
+  "Acid Peptic Disease (GERD)",
+  "Bronchial Asthma / Wheeze",
+];
+
+const QUICK_MED_PRESETS = [
+  { name: "Paracetamol 650mg", dosage: "650mg", frequency: "Three times daily (TDS)", duration: "3 days", instructions: "Take after meals" },
+  { name: "Amoxicillin-Clav 625mg", dosage: "625mg", frequency: "Twice daily (BD)", duration: "5 days", instructions: "Take with food" },
+  { name: "Pantoprazole 40mg", dosage: "40mg", frequency: "Once daily (OD)", duration: "7 days", instructions: "30 mins before breakfast" },
+  { name: "Cetirizine 10mg", dosage: "10mg", frequency: "Once daily (OD)", duration: "5 days", instructions: "At bedtime" },
+  { name: "Azithromycin 500mg", dosage: "500mg", frequency: "Once daily (OD)", duration: "3 days", instructions: "1 hr before food" },
+  { name: "ORS Hydration Sachet", dosage: "1 sachet", frequency: "As needed (SOS)", duration: "2 days", instructions: "Mix in 1L clean water" },
+];
+
+const CLINICAL_NOTE_TEMPLATES = [
+  "Patient in stable hemodynamic condition.",
+  "Chest clear on auscultation; S1/S2 heard normally.",
+  "No signs of focal neurological deficit.",
+  "Adequate hydration and oral fluid intake advised.",
+  "Follow up in 5–7 days or sooner if SOS symptoms arise.",
+];
 
 const CallTimerBadge = memo(({ active, onTick }: { active: boolean; onTick?: (sec: number) => void }) => {
   const [elapsed, setElapsed] = useState(0);
@@ -152,8 +193,8 @@ const Consultations: React.FC = () => {
   // Phase 3: "summary" (Post-Consultation Signed Slip & Next Patient Transition)
   const [workflowPhase, setWorkflowPhase] = useState<"queue" | "encounter" | "summary">("queue");
 
-  // In-call right panel tab: "chart" (SOAP & Rx) | "reports" (Patient Health Reports) | "vitals" (Telemetry)
-  const [inCallTab, setInCallTab] = useState<"chart" | "reports" | "vitals">("chart");
+  // In-call right panel tab: "chart" (SOAP & Rx) | "reports" (Patient Health Reports)
+  const [inCallTab, setInCallTab] = useState<"chart" | "reports">("chart");
 
   // Clinical data states
   const [patients, setPatients] = useState<PatientRecord[]>([]);
@@ -172,7 +213,73 @@ const Consultations: React.FC = () => {
     duration: "5 days",
     instructions: "Take with warm water after meals",
   });
+  const [medications, setMedications] = useState<PrescriptionMedication[]>([
+    {
+      id: "med-1",
+      name: "Paracetamol 650mg",
+      dosage: "650mg",
+      frequency: "Three times daily (TDS)",
+      duration: "3 days",
+      instructions: "Take with warm water after food",
+    },
+  ]);
+  const [newMed, setNewMed] = useState({
+    name: "",
+    dosage: "500mg",
+    frequency: "Twice daily (BD)",
+    duration: "5 days",
+    instructions: "Take after meals",
+  });
+  const [videoLayoutMode, setVideoLayoutMode] = useState<"split" | "theater" | "doc-split">("split");
+  const [inCallPinnedReport, setInCallPinnedReport] = useState<HealthReportItem | null>(null);
+  const [previewRxModalOpen, setPreviewRxModalOpen] = useState(false);
+  const [isPipMinimized, setIsPipMinimized] = useState(false);
   const [concludingConsultation, setConcludingConsultation] = useState(false);
+
+  const handleAddMedication = () => {
+    if (!newMed.name.trim()) {
+      toast({
+        title: "Medication Name Required",
+        description: "Please specify the drug name and formulation.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const item: PrescriptionMedication = {
+      id: `med-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      name: newMed.name.trim(),
+      dosage: newMed.dosage.trim() || "As directed",
+      frequency: newMed.frequency,
+      duration: newMed.duration.trim() || "5 days",
+      instructions: newMed.instructions.trim() || "Take as directed",
+    };
+    setMedications((prev) => [...prev, item]);
+    setNewMed({
+      name: "",
+      dosage: "500mg",
+      frequency: "Twice daily (BD)",
+      duration: "5 days",
+      instructions: "Take after meals",
+    });
+    toast({ title: "Medication Added", description: `${item.name} added to digital prescription.` });
+  };
+
+  const handleRemoveMedication = (id: string) => {
+    setMedications((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const handleAddPresetMedication = (preset: typeof QUICK_MED_PRESETS[0]) => {
+    const item: PrescriptionMedication = {
+      id: `med-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      name: preset.name,
+      dosage: preset.dosage,
+      frequency: preset.frequency,
+      duration: preset.duration,
+      instructions: preset.instructions,
+    };
+    setMedications((prev) => [...prev, item]);
+    toast({ title: "Preset Added", description: `${preset.name} added to digital prescription.` });
+  };
 
   // Admit / Reject / Postpone Modals
   const [postponeModalOpen, setPostponeModalOpen] = useState(false);
@@ -191,6 +298,9 @@ const Consultations: React.FC = () => {
   const [declarationModalOpen, setDeclarationModalOpen] = useState(false);
   const [agreeingDeclaration, setAgreeingDeclaration] = useState(false);
   const [agreementChecked, setAgreementChecked] = useState(false);
+  const [declarationText, setDeclarationText] = useState(
+    "In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare that I will access and use this patient's medical records strictly for the purpose of this clinical consultation. I agree to keep all patient health information confidential."
+  );
 
   // Document Preview Modal
   const [previewReport, setPreviewReport] = useState<HealthReportItem | null>(null);
@@ -225,39 +335,50 @@ const Consultations: React.FC = () => {
     pulse: "72",
   });
 
-  // Default sample reports builder for realistic patient dossiers
-  const createDefaultReports = (patientName: string): HealthReportItem[] => [
-    {
-      id: `rep-cbc-${Date.now()}-1`,
-      title: "Comprehensive Metabolic & CBC Blood Panel",
-      type: "Lab Report",
-      date: "Oct 24, 2026",
-      fileUrl: "#",
-      fileSize: "1.4 MB",
-      summary: "Hemoglobin 14.2 g/dL, WBC 6,800 /mcL, Fasting Blood Sugar 98 mg/dL. All metabolic parameters within normal clinical limits.",
+  // Helper to map backend report records to standard UI model
+  const mapRawReportToItem = (r: any, rIdx: number): HealthReportItem => {
+    const fileUrl = r.s3Link || r.fileUrl || r.url || r.filePath || "#";
+    const title =
+      r.title ||
+      r.name ||
+      r.reportCode ||
+      r.fileName ||
+      (r.product?.name ? `${r.product.name} Diagnostic File` : null) ||
+      `Diagnostic Record #${rIdx + 1}`;
+
+    let repType: HealthReportItem["type"] = "Lab Report";
+    const rawType = (r.type || r.reportType || r.testType || "").toLowerCase();
+    if (rawType.includes("radio") || rawType.includes("x-ray") || rawType.includes("mri") || rawType.includes("scan")) {
+      repType = "Radiology";
+    } else if (rawType.includes("presc") || rawType.includes("rx")) {
+      repType = "Prescription";
+    } else if (rawType.includes("discharge") || rawType.includes("summary")) {
+      repType = "Discharge Summary";
+    } else if (rawType.includes("ecg") || rawType.includes("kiosk") || rawType.includes("bio") || rawType.includes("vital")) {
+      repType = "Biometric Screen";
+    }
+
+    const dateStr = r.createdAt || r.date || r.uploadedAt;
+    const formattedDate = dateStr && !isNaN(new Date(dateStr).getTime())
+      ? new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : "Recent";
+
+    return {
+      id: r._id || r.id || `rep-${rIdx}`,
+      title,
+      type: repType,
+      date: formattedDate,
+      fileUrl,
+      fileSize: r.fileSize || (r.size ? `${Math.round(Number(r.size) / 1024 || 1)} KB` : "1.2 MB"),
+      summary:
+        r.summary ||
+        r.notes ||
+        r.remarks ||
+        (r.product?.name ? `Recorded via Onyx Telehealth Device (${r.product.name}).` : null) ||
+        "Patient health record linked to consultation.",
       isVerified: true,
-    },
-    {
-      id: `rep-rad-${Date.now()}-2`,
-      title: "Digital Chest Radiograph (PA View)",
-      type: "Radiology",
-      date: "Oct 22, 2026",
-      fileUrl: "#",
-      fileSize: "4.8 MB",
-      summary: "Clear lung fields bilaterally without focal consolidation, pneumothorax, or pleural effusion. Normal cardiothoracic ratio.",
-      isVerified: true,
-    },
-    {
-      id: `rep-ecg-${Date.now()}-3`,
-      title: "12-Lead Resting Electrocardiogram (ECG)",
-      type: "Biometric Screen",
-      date: "Oct 20, 2026",
-      fileUrl: "#",
-      fileSize: "820 KB",
-      summary: "Normal sinus rhythm at 72 bpm. PR interval 156 ms, QRS duration 88 ms. No ST segment elevation or ischemic changes observed.",
-      isVerified: true,
-    },
-  ];
+    };
+  };
 
   /* ============================================================
      FETCH CLINICAL DATA & PATIENT QUEUE
@@ -265,10 +386,9 @@ const Consultations: React.FC = () => {
   const fetchConsultationsData = useCallback(async () => {
     setLoading(true);
     try {
-      const [bookingsRes, profilesRes, reportsRes] = await Promise.all([
+      const [bookingsRes, profilesRes] = await Promise.all([
         listBookings().catch(() => null),
         getProfiles().catch(() => null),
-        listReports().catch(() => null),
       ]);
 
       const bookingList = Array.isArray(bookingsRes)
@@ -279,36 +399,17 @@ const Consultations: React.FC = () => {
         ? profilesRes
         : profilesRes?.data || profilesRes?.profiles || [];
 
-      const reportList = Array.isArray(reportsRes)
-        ? reportsRes
-        : reportsRes?.reports || reportsRes?.data || [];
-
-      const profileIds = Array.from(
-        new Set(
-          bookingList
-            .map((b: any) => (typeof b.profileId === "string" ? b.profileId : b.profileId?._id))
-            .filter(Boolean)
-        )
-      ) as string[];
-
       const profileMap = new Map<string, any>();
-      const reportMap = new Map<string, any[]>();
-
-      await Promise.allSettled(
-        profileIds.map(async (pId) => {
-          try {
-            const pRes = await viewProfile(pId);
-            const prof = pRes?.data || pRes?.profile || pRes;
-            if (prof && prof.name) profileMap.set(pId, prof);
-          } catch {}
-
-          try {
-            const rRes = await listReportsByProfile(pId);
-            const reps = Array.isArray(rRes) ? rRes : rRes?.reports || [];
-            if (reps.length > 0) reportMap.set(pId, reps);
-          } catch {}
-        })
-      );
+      profileList.forEach((p: any) => {
+        const id = p._id || p.id;
+        if (id) profileMap.set(String(id), p);
+      });
+      bookingList.forEach((b: any) => {
+        if (b.profileId && typeof b.profileId === "object") {
+          const id = b.profileId._id || b.profileId.id;
+          if (id) profileMap.set(String(id), b.profileId);
+        }
+      });
 
       const realPatients: PatientRecord[] = [];
 
@@ -347,39 +448,35 @@ const Consultations: React.FC = () => {
             formattedPhone = fetchedProfile.phone;
           }
 
-          const profileReportsRaw = (pIdStr ? reportMap.get(pIdStr) : null) || [];
-          let patientReports: HealthReportItem[] = [];
+          // Reports directly included in booking payload if any
+          const patientReports: HealthReportItem[] = Array.isArray(b.reports)
+            ? b.reports.map((r, rIdx) => mapRawReportToItem(r, rIdx))
+            : [];
 
-          if (profileReportsRaw.length > 0) {
-            patientReports = profileReportsRaw.map((r: any, rIdx: number) => ({
-              id: r._id || `rep-${rIdx}`,
-              title: r.title || r.name || `Diagnostic File #${rIdx + 1}`,
-              type: r.type || "Lab Report",
-              date: r.date || r.createdAt ? new Date(r.date || r.createdAt).toLocaleDateString() : "Recent",
-              fileUrl: r.fileUrl || r.url || "#",
-              fileSize: r.fileSize || "1.2 MB",
-              summary: r.summary || r.notes || "Official diagnostic file uploaded by patient during appointment booking.",
-              isVerified: true,
-            }));
-          } else if (Array.isArray(b.reports) && b.reports.length > 0) {
-            patientReports = b.reports.map((r: any, rIdx: number) => ({
-              id: r._id || `rep-b-${rIdx}`,
-              title: r.title || r.name || `Shared Report #${rIdx + 1}`,
-              type: r.type || "Lab Report",
-              date: r.date || "Recent",
-              fileUrl: r.fileUrl || r.url || "#",
-              fileSize: r.fileSize || "1.5 MB",
-              summary: r.summary || "Health record attached at booking time.",
-              isVerified: true,
-            }));
-          } else {
-            patientReports = createDefaultReports(pName);
-          }
+          // Real Hardware IoT Telemetry detection:
+          // Only flag as live synced if actual measured vitals values exist in the database.
+          const rawVitals = b.vitals || fetchedProfile?.vitals || null;
+          const hasRealKioskData = Boolean(
+            rawVitals &&
+            (rawVitals.bp || rawVitals.pulse || rawVitals.temp || rawVitals.spo2 || rawVitals.heartRate)
+          );
 
-          const bp = b.vitals?.bp || "120/80";
-          const temp = b.vitals?.temp || "98.6°F";
-          const pulse = b.vitals?.pulse || 72;
-          const spo2 = b.vitals?.spo2 || "98%";
+          const bp = hasRealKioskData ? (rawVitals.bp || null) : null;
+          const temp = hasRealKioskData
+            ? rawVitals.temp
+              ? String(rawVitals.temp).includes("°")
+                ? String(rawVitals.temp)
+                : `${rawVitals.temp}°F`
+              : null
+            : null;
+          const pulse = hasRealKioskData ? (rawVitals.pulse || rawVitals.heartRate || null) : null;
+          const spo2 = hasRealKioskData
+            ? rawVitals.spo2
+              ? String(rawVitals.spo2).includes("%")
+                ? String(rawVitals.spo2)
+                : `${rawVitals.spo2}%`
+              : null
+            : null;
 
           let qStatus: PatientRecord["status"] = "Scheduled";
           const rawStatus = (b.status || "").toLowerCase();
@@ -416,7 +513,7 @@ const Consultations: React.FC = () => {
               .slice(0, 2)
               .toUpperCase(),
             notes: b.notes || `Chief complaint: ${cond}`,
-            vitals: { bp, temp, pulse, spo2 },
+            vitals: { bp, temp, pulse, spo2, hasRealKioskData },
             bookingId: b._id,
             phone: formattedPhone,
             reports: patientReports,
@@ -429,6 +526,8 @@ const Consultations: React.FC = () => {
         profileList.forEach((p: any, index: number) => {
           const pName = p.name || `Patient ${index + 1}`;
           if (!realPatients.some((rp) => rp.name.toLowerCase() === pName.toLowerCase())) {
+            const profHasVitals = Boolean(p.vitals && (p.vitals.bp || p.vitals.pulse || p.vitals.temp));
+
             realPatients.push({
               id: p._id || p.id || `prof-${index}`,
               name: pName,
@@ -447,9 +546,15 @@ const Consultations: React.FC = () => {
                 .slice(0, 2)
                 .toUpperCase(),
               notes: p.notes || "Kiosk-registered biometric profile.",
-              vitals: { bp: "118/76", temp: "98.4°F", pulse: 70, spo2: "99%" },
+              vitals: {
+                bp: profHasVitals ? (p.vitals?.bp || null) : null,
+                temp: profHasVitals ? (p.vitals?.temp || null) : null,
+                pulse: profHasVitals ? (p.vitals?.pulse || null) : null,
+                spo2: profHasVitals ? (p.vitals?.spo2 || null) : null,
+                hasRealKioskData: profHasVitals,
+              },
               phone: p.phone,
-              reports: createDefaultReports(pName),
+              reports: [],
             });
           }
         });
@@ -457,14 +562,38 @@ const Consultations: React.FC = () => {
 
       setPatients(realPatients);
 
-      // Preserve or set selected patient
-      setSelected((prev) => {
-        if (prev) {
-          const match = realPatients.find((p) => p.id === prev.id || p.bookingId === prev.bookingId);
-          if (match) return match;
-        }
-        return realPatients.find((p) => p.status === "Waiting") || realPatients[0] || null;
-      });
+      // Smart initial queue tab and selected patient auto-focus:
+      const waitingPatients = realPatients.filter(
+        (p) => p.status === "Waiting" || p.status === "In Consultation"
+      );
+      const scheduledPatients = realPatients.filter(
+        (p) => p.status === "Scheduled" || p.status === "Postponed"
+      );
+      const completedPatients = realPatients.filter(
+        (p) => p.status === "Completed" || p.status === "Cancelled"
+      );
+
+      if (waitingPatients.length > 0) {
+        setQueueTab("Waiting");
+        setSelected((prev) => {
+          if (prev && waitingPatients.some((p) => p.id === prev.id)) return prev;
+          return waitingPatients[0];
+        });
+      } else if (scheduledPatients.length > 0) {
+        setQueueTab("Scheduled");
+        setSelected((prev) => {
+          if (prev && scheduledPatients.some((p) => p.id === prev.id)) return prev;
+          return scheduledPatients[0];
+        });
+      } else if (completedPatients.length > 0) {
+        setQueueTab("Completed");
+        setSelected((prev) => {
+          if (prev && completedPatients.some((p) => p.id === prev.id)) return prev;
+          return completedPatients[0];
+        });
+      } else {
+        setSelected(realPatients[0] || null);
+      }
     } catch (err) {
       console.warn("Could not retrieve consultations data:", err);
     } finally {
@@ -496,69 +625,72 @@ const Consultations: React.FC = () => {
     if (selected) {
       setClinicalDiagnosis(selected.condition || "Clinical Telehealth Evaluation");
       setClinicalNotes(selected.notes || "");
-      if (selected.reports && selected.reports.length > 0) {
-        setSharedReports(selected.reports);
-        setSharedReportsStatus("unlocked");
-      } else {
+      if (selected.bookingId) {
         fetchSharedReports(selected.bookingId);
+      } else {
+        setSharedReports(selected.reports || []);
+        setSharedReportsStatus("not_shared");
       }
     }
-  }, [selected]);
+  }, [selected?.id, selected?.bookingId]);
 
   /* ============================================================
-     ABDM / NMC SHARED REPORTS & PRIVACY DECLARATION
+     ABDM / NMC SHARED REPORTS & PRIVACY DECLARATION (Section 3.8)
   ============================================================ */
   const fetchSharedReports = async (bookingId?: string) => {
     const targetBookingId = bookingId || selected?.bookingId;
     if (!targetBookingId) {
-      setSharedReportsStatus("unlocked");
+      setSharedReports(selected?.reports || []);
+      setSharedReportsStatus("not_shared");
       return;
     }
 
     setSharedReportsStatus("loading");
     try {
-      // 1. Check official booking reports endpoint
-      const bookingReportsRes = await getBookingReports(targetBookingId).catch(() => null);
-      if (bookingReportsRes && Array.isArray(bookingReportsRes.reports) && bookingReportsRes.reports.length > 0) {
-        const mapped: HealthReportItem[] = bookingReportsRes.reports.map((r: any, idx: number) => ({
-          id: r.id || r._id || `rep-${idx}`,
-          title: r.title || r.name || `Health Report #${idx + 1}`,
-          type: (r.type as any) || "Lab Report",
-          date: r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : r.date || "Recent",
-          fileUrl: r.fileUrl || r.url || "#",
-          fileSize: r.fileSize || "1.2 MB",
-          summary: r.summary || "Diagnostic health record attached to consultation booking.",
-          isVerified: true,
-        }));
+      const res = await getSharedReports(targetBookingId);
+
+      // Case 1: Doctor declaration required (Server returns HTTP 403)
+      if (
+        res?.status === "declaration_required" ||
+        res?.consentRequired === true ||
+        res?.doctorAgreed === false
+      ) {
+        if (res.declarationText) {
+          setDeclarationText(res.declarationText);
+        }
+        setSharedReports([]);
+        setSharedReportsStatus("declaration_required");
+        return;
+      }
+
+      // Case 2: Patient did not share reports (scope: "none")
+      if (res?.scope === "none" || (res?.reports && res.reports.length === 0)) {
+        setSharedReports([]);
+        setSharedReportsStatus("not_shared");
+        return;
+      }
+
+      // Case 3: Doctor has agreed (HTTP 200 with decrypted reports)
+      if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
+        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) =>
+          mapRawReportToItem(r, idx)
+        );
         setSharedReports(mapped);
         setSharedReportsStatus("unlocked");
         return;
       }
 
-      // 2. ABDM declaration check / shared reports
-      const res = await getSharedReports(targetBookingId);
-      if (res?.declarationRequired) {
-        setSharedReportsStatus("declaration_required");
-      } else if (res?.reports && Array.isArray(res.reports) && res.reports.length > 0) {
-        const mapped: HealthReportItem[] = res.reports.map((r: any, idx: number) => ({
-          id: r._id || `rep-${idx}`,
-          title: r.title || `Diagnostic File #${idx + 1}`,
-          type: r.type || "Lab Report",
-          date: r.date || "Recent",
-          fileUrl: r.fileUrl || r.url || "#",
-          fileSize: r.fileSize || "1.2 MB",
-          summary: r.summary || "External health record securely linked via ABDM.",
-          isVerified: true,
-        }));
-        setSharedReports(mapped);
+      if (selected?.reports && selected.reports.length > 0) {
+        setSharedReports(selected.reports);
         setSharedReportsStatus("unlocked");
       } else {
-        setSharedReports(selected?.reports || createDefaultReports(selected?.name || "Patient"));
-        setSharedReportsStatus("unlocked");
+        setSharedReports([]);
+        setSharedReportsStatus("not_shared");
       }
-    } catch {
-      setSharedReports(selected?.reports || createDefaultReports(selected?.name || "Patient"));
-      setSharedReportsStatus("unlocked");
+    } catch (err) {
+      console.warn("Could not retrieve shared reports:", err);
+      setSharedReports(selected?.reports || []);
+      setSharedReportsStatus("not_shared");
     }
   };
 
@@ -577,15 +709,40 @@ const Consultations: React.FC = () => {
 
     setAgreeingDeclaration(true);
     try {
-      await agreeReportAccess(targetBookingId);
-      toast({ title: "Records Decrypted", description: "Patient history unlocked for this encounter." });
+      await agreeReportAccess(
+        targetBookingId,
+        "I declare that I am accessing this patient's medical records solely for the clinical purpose of this telehealth consultation."
+      );
+      toast({
+        title: "Records Decrypted & Unlocked",
+        description: "Patient diagnostic history verified and accessible under ABDM.",
+      });
       setDeclarationModalOpen(false);
-      fetchSharedReports(targetBookingId);
-    } catch {
-      setDeclarationModalOpen(false);
-      setSharedReportsStatus("unlocked");
+      await fetchSharedReports(targetBookingId);
+    } catch (err: any) {
+      toast({
+        title: "Agreement Recording Failed",
+        description: err.message || "Failed to record compliance declaration.",
+        variant: "destructive",
+      });
     } finally {
       setAgreeingDeclaration(false);
+    }
+  };
+
+  // Switch Queue Tab & synchronize active selection to the first patient of that queue
+  const handleSelectQueueTab = (tab: "Waiting" | "Scheduled" | "Completed") => {
+    setQueueTab(tab);
+    const tabPatients = patients.filter((p) => {
+      if (tab === "Waiting") return p.status === "Waiting" || p.status === "In Consultation";
+      if (tab === "Scheduled") return p.status === "Scheduled" || p.status === "Postponed";
+      if (tab === "Completed") return p.status === "Completed" || p.status === "Cancelled";
+      return false;
+    });
+    if (tabPatients.length > 0) {
+      if (!selected || !tabPatients.some((p) => p.id === selected.id)) {
+        setSelected(tabPatients[0]);
+      }
     }
   };
 
@@ -989,21 +1146,30 @@ const Consultations: React.FC = () => {
       }
 
       // 3. Save Prescription to Backend
+      const medList = medications.length > 0 ? medications : [
+        {
+          id: "med-default",
+          name: rxForm.medication,
+          dosage: rxForm.dosage,
+          frequency: rxForm.frequency,
+          duration: rxForm.duration,
+          instructions: rxForm.instructions,
+        }
+      ];
+
       const rxPayload = {
         bookingId: selected.bookingId,
         patientName: selected.name,
         diagnosis: clinicalDiagnosis || selected.condition,
-        instructions: rxForm.instructions,
-        duration: rxForm.duration,
-        medications: [
-          {
-            name: rxForm.medication,
-            dosage: rxForm.dosage,
-            frequency: rxForm.frequency,
-            duration: rxForm.duration,
-            instructions: rxForm.instructions,
-          },
-        ],
+        instructions: medList[0]?.instructions || "Take as directed",
+        duration: medList[0]?.duration || "5 days",
+        medications: medList.map((m) => ({
+          name: m.name,
+          dosage: m.dosage,
+          frequency: m.frequency,
+          duration: m.duration,
+          instructions: m.instructions,
+        })),
       };
 
       try {
@@ -1110,13 +1276,14 @@ const Consultations: React.FC = () => {
           .toUpperCase(),
         notes: `Clinical walk-in. Chief complaint: ${newPatient.condition}`,
         vitals: {
-          bp: newPatient.bp,
-          temp: newPatient.temp,
-          pulse: newPatient.pulse,
+          bp: newPatient.bp || null,
+          temp: newPatient.temp || null,
+          pulse: newPatient.pulse || null,
           spo2: "98%",
+          hasRealKioskData: false,
         },
         phone: newPatient.phone,
-        reports: createDefaultReports(newPatient.name.trim()),
+        reports: [],
       };
 
       setPatients((prev) => [addedRecord, ...prev]);
@@ -1155,58 +1322,146 @@ const Consultations: React.FC = () => {
       {workflowPhase === "encounter" && selected ? (
         <div className="space-y-4 animate-fadeIn">
           {/* Top Encounter Navigation Bar */}
-          <div className="bg-slate-900 text-white p-4 rounded-[22px] border border-slate-800 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+          <div className="relative overflow-hidden bg-[#0A101D] text-white p-4 lg:px-6 rounded-[26px] border border-white/10 shadow-[0_10px_35px_-5px_rgba(0,0,0,0.5)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            {/* Ambient decorative glow */}
+            <div className="absolute top-0 right-1/4 w-72 h-72 bg-[#35B7C9]/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 right-0 w-64 h-64 bg-[#F2052C]/10 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Left: Patient Identity & Back to Queue */}
+            <div className="relative z-10 flex items-center gap-3">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setWorkflowPhase("queue")}
-                className="text-slate-400 hover:text-white hover:bg-slate-800 rounded-[12px] h-8 px-2 text-xs"
+                className="text-slate-400 hover:text-white hover:bg-white/10 rounded-[14px] h-9 px-3 text-xs font-semibold transition-all"
               >
-                <ChevronLeft className="h-4 w-4 mr-1" /> Back to Queue
+                <ChevronLeft className="h-4 w-4 mr-1 text-slate-400" /> Waiting Room
               </Button>
-              <div className="h-4 w-[1px] bg-slate-700" />
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-extrabold text-white tracking-tight">{selected.name}</h2>
-                  <span className="text-xs text-slate-400">
-                    {selected.age}y · {selected.gender}
-                  </span>
-                  <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                    Live Telehealth Session
-                  </Badge>
+              <div className="h-6 w-[1px] bg-white/15" />
+
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="h-11 w-11 rounded-[16px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-md shrink-0">
+                    <div className="h-full w-full rounded-[14px] bg-[#0A101D] flex items-center justify-center font-black text-sm text-white">
+                      {selected.avatar}
+                    </div>
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-[#0A101D] animate-pulse" />
                 </div>
-                <p className="text-[11px] text-slate-400 font-medium">
-                  {selected.condition} · Ref: {selected.bookingId || selected.id}
-                </p>
+
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base font-black text-white tracking-tight">{selected.name}</h2>
+                    <span className="text-xs text-slate-300 font-medium">
+                      {selected.age}y · {selected.gender} {selected.phone && `· ${selected.phone}`}
+                    </span>
+                    <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <ShieldCheck className="h-3 w-3 text-emerald-400" /> E2E Encrypted
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-medium truncate max-w-md">
+                    <span className="text-amber-300 font-semibold">{selected.condition}</span> · Ref: {selected.bookingId || selected.id}
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="bg-slate-950/80 px-3.5 py-1.5 rounded-full border border-slate-800 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            {/* Right: Live Ticker HUD, View Toggle & Conclude */}
+            <div className="relative z-10 flex items-center gap-2.5 flex-wrap">
+              {/* Live Call Duration & Vitals Quick Ticker */}
+              <div className="bg-white/5 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10 flex items-center gap-2.5 shadow-inner">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                 <CallTimerBadge active={workflowPhase === "encounter"} onTick={(s) => { callDurationRef.current = s; }} />
-                <span className="text-slate-600">|</span>
-                <span className="text-[11px] text-emerald-400 font-mono font-bold">BP: {selected.vitals.bp}</span>
+                <span className="text-white/20">|</span>
+                {selected.vitals.hasRealKioskData && selected.vitals.bp ? (
+                  <>
+                    <span className="text-[11px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                      <HeartPulse className="h-3.5 w-3.5 text-rose-400" /> {selected.vitals.bp}
+                    </span>
+                    {selected.vitals.pulse && (
+                      <span className="text-[11px] text-cyan-300 font-mono font-bold hidden sm:inline">
+                        · {selected.vitals.pulse} bpm
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-[11px] text-slate-300 font-medium">
+                    Remote Consult
+                  </span>
+                )}
               </div>
 
+              {/* Layout Mode Switcher */}
+              <div className="bg-white/5 backdrop-blur-md p-0.5 rounded-[14px] border border-white/10 hidden xl:flex items-center text-xs">
+                <button
+                  onClick={() => {
+                    setVideoLayoutMode("split");
+                    setInCallPinnedReport(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    videoLayoutMode === "split"
+                      ? "bg-white/20 text-white shadow-xs"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Split: Video & Notes"
+                >
+                  <SplitSquareVertical className="h-3.5 w-3.5" /> Split
+                </button>
+                <button
+                  onClick={() => setVideoLayoutMode("theater")}
+                  className={`px-3 py-1.5 rounded-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                    videoLayoutMode === "theater"
+                      ? "bg-white/20 text-white shadow-xs"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Theater: Full Video Canvas"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" /> Focus
+                </button>
+                {sharedReports.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setVideoLayoutMode("doc-split");
+                      if (!inCallPinnedReport) setInCallPinnedReport(sharedReports[0]);
+                    }}
+                    className={`px-3 py-1.5 rounded-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                      videoLayoutMode === "doc-split"
+                        ? "bg-[#35B7C9]/30 text-[#35B7C9] border border-[#35B7C9]/40"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                    title="Compare Document Side-by-Side"
+                  >
+                    <FileCheck2 className="h-3.5 w-3.5" /> Scans
+                  </button>
+                )}
+              </div>
+
+              {/* Conclude Button */}
               <Button
                 onClick={handleConcludeEncounter}
                 disabled={concludingConsultation}
-                className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-extrabold text-xs h-10 px-5 rounded-[14px] shadow-lg shadow-[#F2052C]/30 flex items-center gap-2"
+                className="bg-gradient-to-r from-[#F2052C] via-[#FF3355] to-[#F2052C] hover:opacity-95 text-white font-black text-xs h-10 px-5 rounded-[14px] shadow-lg shadow-[#F2052C]/30 flex items-center gap-2 transform active:scale-95 transition-all"
               >
                 <CheckCircle2 className="h-4 w-4" />
-                {concludingConsultation ? "Concluding…" : "Conclude & Issue Rx"}
+                {concludingConsultation ? "Signing Rx…" : "Conclude & Sign Rx"}
               </Button>
             </div>
           </div>
 
-          {/* Harmonized Split Stage: 60% Video Feed | 40% Live Clinical Workspace */}
+          {/* Harmonized Split Stage: Video Feed + Live Clinical Companion */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            {/* Left Stage (7 cols / ~58% width): Agora Video Suite */}
-            <div className="lg:col-span-7 bg-slate-950 rounded-[26px] overflow-hidden border border-slate-800 shadow-2xl relative h-[600px] flex flex-col justify-between">
-              {/* Video Viewport */}
-              <div className="relative flex-1 w-full h-full flex items-center justify-center overflow-hidden">
+            {/* Left Stage: Agora Video Suite */}
+            <div
+              className={`${
+                videoLayoutMode === "theater"
+                  ? "lg:col-span-12"
+                  : videoLayoutMode === "doc-split"
+                  ? "lg:col-span-6"
+                  : "lg:col-span-7 xl:col-span-7"
+              } relative w-full h-[620px] lg:h-[660px] rounded-[28px] overflow-hidden border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] bg-[#090D16] flex flex-col justify-between group transition-all duration-300`}
+            >
+              {/* Video Viewport / Agora Remote View */}
+              <div className="relative flex-1 w-full h-full overflow-hidden flex items-center justify-center">
                 <div id="remote-video" className="absolute inset-0 w-full h-full object-cover">
                   {/* Dedicated Agora Container */}
                   <div
@@ -1216,337 +1471,644 @@ const Consultations: React.FC = () => {
                     }`}
                   />
 
-                  {/* Paused / Connecting Fallback */}
+                  {/* Elegant Waiting / Connecting Screen */}
                   {(!remoteVideoTrackActive || !remoteUserConnected) && (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-400 z-10 relative">
-                      <div className="h-20 w-20 rounded-full bg-slate-800 flex items-center justify-center mb-3 shadow-inner">
-                        <User className="h-10 w-10 text-slate-500" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 z-10 p-6 text-center bg-gradient-to-b from-[#0F172A] via-[#090D16] to-[#050811]">
+                      {/* Pulsing ring graphic */}
+                      <div className="relative mb-5">
+                        <div className="absolute -inset-4 rounded-full bg-[#35B7C9]/10 animate-ping" />
+                        <div className="absolute -inset-2 rounded-full bg-[#F2052C]/10 animate-pulse" />
+                        <div className="relative h-24 w-24 rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-white/15 flex items-center justify-center shadow-2xl">
+                          <span className="text-2xl font-black text-white">{selected.avatar}</span>
+                        </div>
+                        <div className="absolute bottom-0 right-0 h-6 w-6 rounded-full bg-emerald-500 border-2 border-[#090D16] flex items-center justify-center">
+                          <Video className="h-3 w-3 text-white" />
+                        </div>
                       </div>
-                      <p className="text-sm font-semibold">
+
+                      <h3 className="text-base font-extrabold text-white tracking-tight mb-1">
+                        {remoteUserConnected ? `${selected.name}'s Video Paused` : `Connecting with ${selected.name}`}
+                      </h3>
+                      <p className="text-xs text-slate-400 max-w-sm mb-4">
                         {remoteUserConnected
-                          ? "Patient video paused"
-                          : "Connecting with patient in encrypted Agora telehealth room..."}
+                          ? "The patient has disabled their camera or switched windows. Audio remains live."
+                          : "End-to-end encrypted telehealth room ready. Waiting for patient to establish video stream..."}
                       </p>
+
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-slate-300 font-mono">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Room ID: {selected.bookingId?.slice(-6) || "Active"}</span>
+                        <span className="text-white/20">|</span>
+                        <span>Agora HD Engine Active</span>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Doctor PiP Floating Camera Preview */}
-                <div className="absolute top-4 right-4 w-44 h-32 bg-slate-800 rounded-[18px] overflow-hidden border-2 border-white/20 shadow-lg z-20">
-                  <div id="local-video" className="w-full h-full object-cover relative">
-                    <div
-                      id="local-video-container"
-                      className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
-                    />
-                    {!cameraActive && (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-500 text-xs">
-                        <VideoOff className="h-6 w-6 mb-1 text-slate-600" />
-                        <span>Camera Off</span>
-                      </div>
+                {/* Floating Top-Left HUD: Live Patient Identity & Real-Time Vitals Ticker */}
+                <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+                  <div className="bg-slate-950/80 backdrop-blur-xl border border-white/15 text-white px-3.5 py-1.5 rounded-full flex items-center gap-2.5 shadow-xl">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-xs font-black">{selected.name}</span>
+                    <span className="text-white/20">|</span>
+                    {selected.vitals.hasRealKioskData && selected.vitals.bp ? (
+                      <>
+                        <span className="text-[11px] font-mono font-bold text-rose-300 flex items-center gap-1">
+                          <Heart className="h-3 w-3 text-rose-400 fill-rose-400" /> {selected.vitals.bp}
+                        </span>
+                        {selected.vitals.pulse && (
+                          <span className="text-[11px] font-mono text-cyan-300 font-bold hidden sm:inline">
+                            {selected.vitals.pulse} bpm
+                          </span>
+                        )}
+                        {selected.vitals.spo2 && (
+                          <span className="text-[11px] font-mono text-emerald-300 font-bold hidden md:inline">
+                            {selected.vitals.spo2} SpO2
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-300 font-medium">Remote Session</span>
                     )}
                   </div>
-                  <div className="absolute bottom-1.5 left-2 text-[10px] font-bold bg-black/60 px-2 py-0.5 rounded-full text-white">
-                    You (Doctor)
-                  </div>
                 </div>
-              </div>
 
-              {/* In-Call Bottom Control Bar */}
-              <div className="h-18 bg-slate-900/90 backdrop-blur-md px-6 py-3 border-t border-slate-800 flex items-center justify-between z-20">
-                <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                  Agora HD Stream · 1080p
-                </Badge>
+                {/* Floating Top-Right: Stream Quality & PiP Controls */}
+                <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+                  <div className="bg-slate-950/80 backdrop-blur-xl border border-white/15 text-white px-3 py-1.5 rounded-full flex items-center gap-2 text-[10px] font-mono font-bold shadow-xl">
+                    <Lock className="h-3 w-3 text-emerald-400" />
+                    <span className="text-slate-300 hidden sm:inline">1080p HD</span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  </div>
 
-                <div className="flex items-center gap-3">
+                  {/* Restore PiP button if minimized */}
+                  {isPipMinimized && (
+                    <Button
+                      size="sm"
+                      onClick={() => setIsPipMinimized(false)}
+                      className="h-8 px-2.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 text-white hover:bg-slate-800 text-xs font-bold"
+                    >
+                      <Camera className="h-3.5 w-3.5 mr-1 text-[#35B7C9]" /> Dr. Camera
+                    </Button>
+                  )}
+                </div>
+
+                {/* Doctor Floating Picture-in-Picture (PiP) */}
+                {!isPipMinimized && (
+                  <div className="absolute bottom-24 right-4 sm:right-6 w-44 h-32 sm:w-48 sm:h-36 rounded-[22px] overflow-hidden border-2 border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.6)] bg-slate-900/90 backdrop-blur-md z-20 group/pip transition-all hover:scale-105">
+                    <div id="local-video" className="w-full h-full object-cover relative">
+                      <div
+                        id="local-video-container"
+                        className={`w-full h-full object-cover -scale-x-100 ${cameraActive ? "block" : "hidden"}`}
+                      />
+                      {!cameraActive && (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400 text-xs">
+                          <VideoOff className="h-6 w-6 mb-1 text-rose-400" />
+                          <span className="font-semibold text-[11px]">Camera Muted</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Doctor Label & Minimize control */}
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] font-bold z-10 pointer-events-auto">
+                      <span className="bg-black/70 backdrop-blur-md px-2 py-0.5 rounded-full text-white font-mono flex items-center gap-1">
+                        <span className={`h-1.5 w-1.5 rounded-full ${micActive ? "bg-emerald-400" : "bg-rose-500"}`} />
+                        You (Dr.)
+                      </span>
+                      <button
+                        onClick={() => setIsPipMinimized(true)}
+                        className="h-5 w-5 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center opacity-0 group-hover/pip:opacity-100 transition-opacity"
+                        title="Minimize PiP"
+                      >
+                        <Minimize2 className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Centered Floating Glassmorphic Control Dock */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 bg-slate-950/85 backdrop-blur-2xl border border-white/15 px-4 py-2 sm:px-5 sm:py-2.5 rounded-full shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
+                  {/* Microphone Toggle */}
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="icon"
                     onClick={toggleMic}
-                    className={`rounded-full h-11 w-11 border-none shadow-md ${
-                      micActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
+                    className={`rounded-full h-11 w-11 transition-all ${
+                      micActive
+                        ? "bg-white/10 hover:bg-white/20 text-white ring-1 ring-white/15"
+                        : "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-500/50"
                     }`}
+                    title={micActive ? "Mute Microphone" : "Unmute Microphone"}
                   >
                     {micActive ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                   </Button>
 
+                  {/* Camera Toggle */}
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="icon"
                     onClick={toggleCamera}
-                    className={`rounded-full h-11 w-11 border-none shadow-md ${
-                      cameraActive ? "bg-white/10 hover:bg-white/20 text-white" : "bg-rose-600 text-white"
+                    className={`rounded-full h-11 w-11 transition-all ${
+                      cameraActive
+                        ? "bg-white/10 hover:bg-white/20 text-white ring-1 ring-white/15"
+                        : "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-500/50"
                     }`}
+                    title={cameraActive ? "Turn Off Camera" : "Turn On Camera"}
                   >
                     {cameraActive ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
                   </Button>
 
+                  {/* Device Check Popover */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setPermissionsModalOpen(true)}
+                    className="rounded-full h-11 w-11 bg-white/10 hover:bg-white/20 text-white ring-1 ring-white/15"
+                    title="Audio & Video Device Settings"
+                  >
+                    <Sliders className="h-4.5 w-4.5 text-[#35B7C9]" />
+                  </Button>
+
+                  {/* Preview Rx Button */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setPreviewRxModalOpen(true)}
+                    className="rounded-full h-11 w-11 bg-white/10 hover:bg-white/20 text-white ring-1 ring-white/15"
+                    title="Preview Signed Digital Prescription"
+                  >
+                    <Eye className="h-4.5 w-4.5 text-amber-300" />
+                  </Button>
+
+                  <div className="h-6 w-[1px] bg-white/20 mx-1" />
+
+                  {/* Conclude Encounter Button */}
                   <Button
                     onClick={handleConcludeEncounter}
-                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-5 h-11 rounded-full shadow-lg shadow-rose-600/30 flex items-center gap-1.5"
+                    disabled={concludingConsultation}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs h-11 px-5 rounded-full shadow-lg shadow-rose-600/40 flex items-center gap-2 transform active:scale-95 transition-all"
                   >
-                    <PhoneOff className="h-4 w-4" /> End Call
+                    <PhoneOff className="h-4 w-4" />
+                    <span className="hidden sm:inline">End & Issue Rx</span>
+                    <span className="sm:hidden">End</span>
                   </Button>
                 </div>
-
-                <span className="text-[11px] text-slate-400 font-mono">Channel: {selected.bookingId?.slice(-6) || "Active"}</span>
               </div>
             </div>
 
-            {/* Right Stage (5 cols / ~42% width): Live Clinical Workspace with Reports Tab */}
-            <div className="lg:col-span-5 space-y-4">
-              {/* Tab Selector Header: SOAP Chart vs Patient Health Reports vs Vitals */}
-              <div className="flex items-center p-1 bg-slate-100 rounded-[16px] text-xs font-bold text-slate-500">
-                <button
-                  onClick={() => setInCallTab("chart")}
-                  className={`flex-1 py-2 rounded-[12px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                    inCallTab === "chart" ? "bg-white text-[#14213D] shadow-sm font-black" : "hover:text-[#14213D]"
-                  }`}
-                >
-                  <Pill className="h-3.5 w-3.5 text-[#F2052C]" />
-                  <span>Digital Rx Pad</span>
-                </button>
+            {/* Right Stage: Live Clinical Workspace or Pinned Document Viewer */}
+            <div
+              className={`${
+                videoLayoutMode === "doc-split"
+                  ? "lg:col-span-6"
+                  : videoLayoutMode === "theater"
+                  ? "hidden"
+                  : "lg:col-span-5 xl:col-span-5"
+              } space-y-4`}
+            >
+              {/* If in doc-split mode and pinned report exists, render document viewer */}
+              {videoLayoutMode === "doc-split" && inCallPinnedReport ? (
+                <div className="bg-white rounded-[26px] border border-slate-200/80 p-5 shadow-sm space-y-4 h-[620px] lg:h-[660px] flex flex-col justify-between animate-fadeIn">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-9 w-9 rounded-[12px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold">
+                          <FileCheck2 className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-[#14213D] leading-tight">{inCallPinnedReport.title}</h4>
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {inCallPinnedReport.type} · {inCallPinnedReport.date} · {inCallPinnedReport.fileSize}
+                          </span>
+                        </div>
+                      </div>
 
-                <button
-                  onClick={() => setInCallTab("reports")}
-                  className={`flex-1 py-2 rounded-[12px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                    inCallTab === "reports" ? "bg-white text-[#14213D] shadow-sm font-black" : "hover:text-[#14213D]"
-                  }`}
-                >
-                  <FileText className="h-3.5 w-3.5 text-[#35B7C9]" />
-                  <span>Health Reports</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#35B7C9]/10 text-[#35B7C9] font-mono">
-                    {sharedReports.length}
-                  </span>
-                </button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setVideoLayoutMode("split");
+                          setInCallPinnedReport(null);
+                        }}
+                        className="h-8 text-xs font-bold text-slate-500 hover:text-[#14213D]"
+                      >
+                        <X className="h-4 w-4 mr-1" /> Close Scan
+                      </Button>
+                    </div>
 
-                <button
-                  onClick={() => setInCallTab("vitals")}
-                  className={`flex-1 py-2 rounded-[12px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                    inCallTab === "vitals" ? "bg-white text-[#14213D] shadow-sm font-black" : "hover:text-[#14213D]"
-                  }`}
-                >
-                  <HeartPulse className="h-3.5 w-3.5 text-rose-500" />
-                  <span>Vitals HUD</span>
-                </button>
-              </div>
+                    {/* Report Content Body */}
+                    <div className="p-4 rounded-[18px] bg-slate-900 text-slate-200 text-xs font-mono leading-relaxed space-y-3 border border-slate-800">
+                      <div className="flex justify-between text-slate-400 border-b border-slate-800 pb-2">
+                        <span>Record ID: {inCallPinnedReport.id}</span>
+                        <span>ABDM Certified</span>
+                      </div>
+                      <p className="text-slate-300 text-xs leading-relaxed font-sans">{inCallPinnedReport.summary}</p>
+                    </div>
 
-              {/* TAB 1: SOAP CHART & DIGITAL RX PAD */}
-              {inCallTab === "chart" && (
-                <div className="bg-white rounded-[22px] border border-slate-200/80 p-5 shadow-sm space-y-4 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Pill className="h-3.5 w-3.5 text-[#F2052C]" /> In-Call Clinical Prescription Pad
-                    </span>
-                    <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                      Active Encounter
-                    </Badge>
+                    <div className="p-3.5 rounded-[16px] bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-xs font-bold text-emerald-800">
+                      <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                      Verified diagnostic record submitted by patient during consultation booking.
+                    </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <Label className="text-[11px] font-bold text-slate-500 mb-1 block">Clinical Diagnosis</Label>
-                      <Input
-                        value={clinicalDiagnosis}
-                        onChange={(e) => setClinicalDiagnosis(e.target.value)}
-                        placeholder="e.g. Acute Upper Respiratory Tract Infection (URTI)"
-                        className="rounded-[12px] h-9 text-xs font-semibold"
-                      />
-                    </div>
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                    <Button
+                      size="sm"
+                      onClick={() => handleInsertReportToNotes(inCallPinnedReport)}
+                      className="rounded-[12px] h-9 text-xs font-bold bg-[#F2052C] hover:bg-[#D00424] text-white flex items-center gap-1.5"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Append Findings to SOAP
+                    </Button>
 
-                    <div>
-                      <Label className="text-[11px] font-bold text-slate-500 mb-1 block">SOAP Clinical Notes & Patient History</Label>
-                      <Textarea
-                        rows={3}
-                        value={clinicalNotes}
-                        onChange={(e) => setClinicalNotes(e.target.value)}
-                        placeholder="Subjective complaints, objective observations, assessment, plan..."
-                        className="rounded-[12px] text-xs font-medium resize-none"
-                      />
-                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setInCallTab("chart")}
+                      className="rounded-[12px] h-9 text-xs font-bold border-slate-200"
+                    >
+                      Switch to Rx Pad
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Segmented Navigation Tabs */}
+                  <div className="flex items-center p-1 bg-slate-100 rounded-[18px] text-xs font-bold text-slate-500 shadow-inner">
+                    <button
+                      onClick={() => setInCallTab("chart")}
+                      className={`flex-1 py-2.5 rounded-[14px] transition-all text-center flex items-center justify-center gap-1.5 ${
+                        inCallTab === "chart"
+                          ? "bg-white text-[#14213D] shadow-sm font-black"
+                          : "hover:text-[#14213D]"
+                      }`}
+                    >
+                      <Pill className="h-3.5 w-3.5 text-[#F2052C]" />
+                      <span>Digital Rx Pad</span>
+                      {medications.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-50 text-rose-600 font-mono font-bold">
+                          {medications.length}
+                        </span>
+                      )}
+                    </button>
 
-                    <div className="pt-2 border-t border-slate-100 space-y-2.5">
-                      <Label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block">
-                        Prescription Item
-                      </Label>
+                    <button
+                      onClick={() => setInCallTab("reports")}
+                      className={`flex-1 py-2.5 rounded-[14px] transition-all text-center flex items-center justify-center gap-1.5 ${
+                        inCallTab === "reports"
+                          ? "bg-white text-[#14213D] shadow-sm font-black"
+                          : "hover:text-[#14213D]"
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5 text-[#35B7C9]" />
+                      <span>Patient Reports</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#35B7C9]/10 text-[#35B7C9] font-mono">
+                        {sharedReports.length}
+                      </span>
+                    </button>
+                  </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Drug Name & Formulation</Label>
-                          <Input
-                            value={rxForm.medication}
-                            onChange={(e) => setRxForm({ ...rxForm, medication: e.target.value })}
-                            className="rounded-[10px] h-8 text-xs font-semibold"
-                          />
+                  {/* TAB 1: SOAP CHART & DIGITAL RX PAD */}
+                  {inCallTab === "chart" && (
+                    <div className="bg-white rounded-[24px] border border-slate-200/80 p-5 shadow-sm space-y-4 animate-fadeIn max-h-[600px] overflow-y-auto pr-1">
+                      {/* Clinical Diagnosis Section with Quick Chips */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block">
+                            Clinical Impression & Diagnosis
+                          </Label>
+                          <span className="text-[10px] text-slate-400 font-medium">1-Click Quick Select:</span>
                         </div>
 
-                        <div>
-                          <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Dosage</Label>
-                          <Input
-                            value={rxForm.dosage}
-                            onChange={(e) => setRxForm({ ...rxForm, dosage: e.target.value })}
-                            className="rounded-[10px] h-8 text-xs font-semibold"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Frequency</Label>
-                          <Select
-                            value={rxForm.frequency}
-                            onValueChange={(val) => setRxForm({ ...rxForm, frequency: val })}
-                          >
-                            <SelectTrigger className="rounded-[10px] h-8 text-xs font-semibold">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Once daily (OD)">Once daily (OD)</SelectItem>
-                              <SelectItem value="Twice daily (BD)">Twice daily (BD)</SelectItem>
-                              <SelectItem value="Three times daily (TDS)">Three times daily (TDS)</SelectItem>
-                              <SelectItem value="As needed (SOS)">As needed (SOS)</SelectItem>
-                            </SelectContent>
-                          </Select>
+                        {/* Quick Diagnosis Chips */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {COMMON_DIAGNOSES.map((diag) => (
+                            <button
+                              key={diag}
+                              type="button"
+                              onClick={() => setClinicalDiagnosis(diag)}
+                              className={`text-[10px] font-bold px-2.5 py-1 rounded-full transition-all border ${
+                                clinicalDiagnosis === diag
+                                  ? "bg-[#F2052C] text-white border-[#F2052C] shadow-xs"
+                                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              {diag}
+                            </button>
+                          ))}
                         </div>
 
-                        <div>
-                          <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Duration</Label>
-                          <Input
-                            value={rxForm.duration}
-                            onChange={(e) => setRxForm({ ...rxForm, duration: e.target.value })}
-                            className="rounded-[10px] h-8 text-xs font-semibold"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Instructions</Label>
                         <Input
-                          value={rxForm.instructions}
-                          onChange={(e) => setRxForm({ ...rxForm, instructions: e.target.value })}
-                          className="rounded-[10px] h-8 text-xs font-semibold"
+                          value={clinicalDiagnosis}
+                          onChange={(e) => setClinicalDiagnosis(e.target.value)}
+                          placeholder="Or type custom diagnosis..."
+                          className="rounded-[12px] h-9 text-xs font-semibold"
                         />
                       </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              {/* TAB 2: IN-CALL PATIENT HEALTH REPORTS VIEWER */}
-              {inCallTab === "reports" && (
-                <div className="bg-white rounded-[22px] border border-slate-200/80 p-5 shadow-sm space-y-3.5 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-black text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
-                        <FileCheck2 className="h-4 w-4 text-[#35B7C9]" /> Patient-Shared Health Reports
-                      </h4>
-                      <p className="text-[10px] text-slate-400">View diagnostic tests & lab scans during the active call</p>
-                    </div>
-                    <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                      {sharedReports.length} Files
-                    </Badge>
-                  </div>
+                      {/* SOAP Clinical Assessment Notes with Quick Phrases */}
+                      <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                        <Label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block">
+                          SOAP Clinical Notes & Assessment
+                        </Label>
+                        <Textarea
+                          rows={3}
+                          value={clinicalNotes}
+                          onChange={(e) => setClinicalNotes(e.target.value)}
+                          placeholder="Chief complaints, history of presenting illness, examination findings, clinical assessment..."
+                          className="rounded-[12px] text-xs font-medium resize-none leading-relaxed"
+                        />
 
-                  <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                    {sharedReports.length === 0 ? (
-                      <div className="p-8 text-center bg-slate-50 rounded-[16px] border border-dashed border-slate-200">
-                        <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                        <p className="text-xs font-bold text-slate-600">No health reports uploaded</p>
+                        {/* Quick Clinical Phrase Chips */}
+                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                          {CLINICAL_NOTE_TEMPLATES.map((phrase, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setClinicalNotes((prev) => (prev ? `${prev} ${phrase}` : phrase))}
+                              className="text-[10px] font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 px-2 py-0.5 rounded-[8px] border border-slate-200 transition-colors"
+                            >
+                              + {phrase.slice(0, 26)}…
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    ) : (
-                      sharedReports.map((r) => (
-                        <div
-                          key={r.id}
-                          className="p-3.5 rounded-[16px] border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors space-y-2"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="h-8 w-8 rounded-[10px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center shrink-0">
-                                <FileText className="h-4 w-4" />
-                              </div>
-                              <div className="min-w-0">
-                                <h5 className="text-xs font-extrabold text-[#14213D] truncate">{r.title}</h5>
-                                <span className="text-[10px] text-slate-400 font-semibold">{r.type} · {r.date}</span>
-                              </div>
-                            </div>
 
-                            <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
+                      {/* Multi-Medication Digital Prescription */}
+                      <div className="pt-3 border-t border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-black text-slate-700 uppercase tracking-wider block flex items-center gap-1.5">
+                            <Pill className="h-3.5 w-3.5 text-[#F2052C]" /> Prescribed Medications ({medications.length})
+                          </Label>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewRxModalOpen(true)}
+                            className="text-[11px] font-bold text-[#F2052C] hover:underline flex items-center gap-1"
+                          >
+                            <Eye className="h-3 w-3" /> Preview Rx Slip
+                          </button>
+                        </div>
+
+                        {/* List of Added Medications */}
+                        {medications.length > 0 ? (
+                          <div className="space-y-2">
+                            {medications.map((m, idx) => (
+                              <div
+                                key={m.id}
+                                className="p-2.5 rounded-[14px] bg-slate-50/80 border border-slate-200/90 flex items-center justify-between gap-2 text-xs hover:border-slate-300 transition-colors"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-extrabold text-[#14213D]">
+                                      {idx + 1}. {m.name}
+                                    </span>
+                                    <Badge className="bg-white border-slate-200 text-[10px] font-bold text-slate-700 px-1.5 py-0">
+                                      {m.dosage}
+                                    </Badge>
+                                    <Badge className="bg-rose-50 border-rose-200 text-[10px] font-bold text-rose-700 px-1.5 py-0">
+                                      {m.frequency}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                    Duration: <span className="font-semibold text-slate-700">{m.duration}</span> · {m.instructions}
+                                  </p>
+                                </div>
+
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveMedication(m.id)}
+                                  className="h-7 w-7 text-slate-400 hover:text-rose-600 rounded-full shrink-0"
+                                  title="Remove medication"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-4 rounded-[14px] bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-400 font-medium">
+                            No medications added yet. Choose a preset or enter details below.
+                          </div>
+                        )}
+
+                        {/* 1-Click Medication Presets */}
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                            Quick-Add Common Presets:
+                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {QUICK_MED_PRESETS.map((preset) => (
+                              <button
+                                key={preset.name}
+                                type="button"
+                                onClick={() => handleAddPresetMedication(preset)}
+                                className="text-[10px] font-semibold text-slate-700 bg-white hover:bg-rose-50 hover:text-[#F2052C] px-2.5 py-1 rounded-[10px] border border-slate-200 hover:border-rose-200 shadow-2xs transition-all flex items-center gap-1"
+                              >
+                                <Plus className="h-2.5 w-2.5 text-[#F2052C]" /> {preset.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Add Custom Drug Form */}
+                        <div className="p-3 rounded-[16px] bg-slate-50/70 border border-slate-200 space-y-2.5">
+                          <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider block">
+                            Add Custom Drug
+                          </span>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Drug Name</Label>
+                              <Input
+                                value={newMed.name}
+                                onChange={(e) => setNewMed({ ...newMed, name: e.target.value })}
+                                placeholder="e.g. Cefixime 200mg"
+                                className="rounded-[10px] h-8 text-xs font-semibold bg-white"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Dosage</Label>
+                              <Input
+                                value={newMed.dosage}
+                                onChange={(e) => setNewMed({ ...newMed, dosage: e.target.value })}
+                                placeholder="e.g. 200mg"
+                                className="rounded-[10px] h-8 text-xs font-semibold bg-white"
+                              />
+                            </div>
                           </div>
 
-                          <p className="text-[11px] text-slate-600 bg-white p-2 rounded-[10px] border border-slate-100 leading-relaxed">
-                            {r.summary}
-                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Frequency</Label>
+                              <Select
+                                value={newMed.frequency}
+                                onValueChange={(val) => setNewMed({ ...newMed, frequency: val })}
+                              >
+                                <SelectTrigger className="rounded-[10px] h-8 text-xs font-semibold bg-white">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Once daily (OD)">Once daily (OD)</SelectItem>
+                                  <SelectItem value="Twice daily (BD)">Twice daily (BD)</SelectItem>
+                                  <SelectItem value="Three times daily (TDS)">Three times daily (TDS)</SelectItem>
+                                  <SelectItem value="Four times daily (QID)">Four times daily (QID)</SelectItem>
+                                  <SelectItem value="As needed (SOS)">As needed (SOS)</SelectItem>
+                                  <SelectItem value="At bedtime (HS)">At bedtime (HS)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <Label className="text-[10px] font-bold text-slate-400 mb-0.5 block">Duration</Label>
+                              <Input
+                                value={newMed.duration}
+                                onChange={(e) => setNewMed({ ...newMed, duration: e.target.value })}
+                                placeholder="e.g. 5 days"
+                                className="rounded-[10px] h-8 text-xs font-semibold bg-white"
+                              />
+                            </div>
+                          </div>
 
-                          <div className="flex items-center justify-between pt-1 gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <Input
+                                value={newMed.instructions}
+                                onChange={(e) => setNewMed({ ...newMed, instructions: e.target.value })}
+                                placeholder="Instructions (e.g. Take after food with warm water)"
+                                className="rounded-[10px] h-8 text-xs font-semibold bg-white"
+                              />
+                            </div>
                             <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setPreviewReport(r)}
-                              className="h-7 text-[10px] font-bold rounded-[8px] border-slate-200 text-slate-700 flex items-center gap-1"
+                              type="button"
+                              onClick={handleAddMedication}
+                              className="rounded-[10px] h-8 px-3 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shrink-0"
                             >
-                              <ExternalLink className="h-3 w-3 text-[#35B7C9]" /> Inspect Document
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleInsertReportToNotes(r)}
-                              className="h-7 text-[10px] font-bold text-[#F2052C] hover:bg-rose-50 rounded-[8px] flex items-center gap-1"
-                            >
-                              <Plus className="h-3 w-3" /> Append to SOAP
+                              <Plus className="h-3 w-3 mr-1" /> Add
                             </Button>
                           </div>
                         </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 3: KIOSK IOT VITALS TELEMETRY HUD */}
-              {inCallTab === "vitals" && (
-                <div className="bg-white rounded-[22px] border border-slate-200/80 p-5 shadow-sm space-y-4 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <HeartPulse className="h-3.5 w-3.5 text-rose-500" /> Kiosk Screening Telemetry
-                    </span>
-                    <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">
-                      Verified
-                    </Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-center">
-                    <div className="p-3.5 rounded-[16px] bg-rose-50/60 border border-rose-100">
-                      <div className="text-[10px] font-bold text-rose-600">Blood Pressure</div>
-                      <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{selected.vitals.bp}</div>
-                      <span className="text-[10px] text-slate-400 font-semibold">mmHg</span>
+                      </div>
                     </div>
+                  )}
 
-                    <div className="p-3.5 rounded-[16px] bg-emerald-50/60 border border-emerald-100">
-                      <div className="text-[10px] font-bold text-emerald-600">Heart Rate</div>
-                      <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{selected.vitals.pulse} bpm</div>
-                      <span className="text-[10px] text-slate-400 font-semibold">Normal Rhythm</span>
+                  {/* TAB 2: IN-CALL PATIENT HEALTH REPORTS VIEWER */}
+                  {inCallTab === "reports" && (
+                    <div className="bg-white rounded-[24px] border border-slate-200/80 p-5 shadow-sm space-y-3.5 animate-fadeIn max-h-[600px] overflow-y-auto pr-1">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-black text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
+                            <FileCheck2 className="h-4 w-4 text-[#35B7C9]" /> Patient Diagnostic Records
+                          </h4>
+                          <p className="text-[10px] text-slate-400">Review lab tests, radiology, and files during the active call</p>
+                        </div>
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[10px] text-[10px] font-bold h-7 px-2.5 flex items-center gap-1 shadow-xs"
+                          >
+                            <Lock className="h-3 w-3" /> Unlock
+                          </Button>
+                        ) : (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                            {sharedReports.length} Files
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <div className="p-6 text-center bg-amber-50/70 rounded-[18px] border border-amber-200/80 space-y-2.5">
+                            <div className="h-10 w-10 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center">
+                              <Lock className="h-5 w-5" />
+                            </div>
+                            <p className="text-xs font-bold text-amber-950">ABDM Telemedicine Declaration Required</p>
+                            <p className="text-[10px] text-amber-800/80 leading-relaxed max-w-xs mx-auto">
+                              Sign NMC compliance declaration to view and pin this patient's shared reports during the call.
+                            </p>
+                            <Button
+                              size="sm"
+                              onClick={() => setDeclarationModalOpen(true)}
+                              className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[10px] text-[11px] h-8 px-4 inline-flex items-center gap-1.5 shadow-xs"
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" /> Sign Declaration
+                            </Button>
+                          </div>
+                        ) : sharedReportsStatus === "loading" ? (
+                          <div className="p-8 text-center bg-slate-50/70 rounded-[18px] border border-slate-200/80 space-y-2">
+                            <RefreshCw className="h-5 w-5 text-[#35B7C9] animate-spin mx-auto" />
+                            <p className="text-xs font-semibold text-slate-600">Checking patient consent & records...</p>
+                          </div>
+                        ) : sharedReports.length === 0 ? (
+                          <div className="p-8 text-center bg-slate-50 rounded-[18px] border border-dashed border-slate-200">
+                            <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                            <p className="text-xs font-bold text-slate-600">No health reports shared</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">Patient has not attached diagnostic files for this consultation.</p>
+                          </div>
+                        ) : (
+                          sharedReports.map((r) => (
+                            <div
+                              key={r.id}
+                              className="p-3.5 rounded-[18px] border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all space-y-2"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="h-8 w-8 rounded-[10px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center shrink-0">
+                                    <FileText className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h5 className="text-xs font-extrabold text-[#14213D] truncate">{r.title}</h5>
+                                    <span className="text-[10px] text-slate-400 font-semibold">{r.type} · {r.date}</span>
+                                  </div>
+                                </div>
+
+                                <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-600 bg-white p-2.5 rounded-[12px] border border-slate-100 leading-relaxed">
+                                {r.summary}
+                              </p>
+
+                              <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setPreviewReport(r)}
+                                    className="h-7 text-[10px] font-bold rounded-[8px] border-slate-200 text-slate-700 flex items-center gap-1"
+                                  >
+                                    <ExternalLink className="h-3 w-3 text-[#35B7C9]" /> Inspect
+                                  </Button>
+
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setInCallPinnedReport(r);
+                                      setVideoLayoutMode("doc-split");
+                                    }}
+                                    className="h-7 text-[10px] font-bold rounded-[8px] border-[#35B7C9]/40 text-[#35B7C9] hover:bg-[#35B7C9]/10 flex items-center gap-1"
+                                  >
+                                    <SplitSquareVertical className="h-3 w-3" /> Pin Beside Video
+                                  </Button>
+                                </div>
+
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleInsertReportToNotes(r)}
+                                  className="h-7 text-[10px] font-bold text-[#F2052C] hover:bg-rose-50 rounded-[8px] flex items-center gap-1"
+                                >
+                                  <Plus className="h-3 w-3" /> Append to SOAP
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
-
-                    <div className="p-3.5 rounded-[16px] bg-amber-50/60 border border-amber-100">
-                      <div className="text-[10px] font-bold text-amber-600">Body Temp</div>
-                      <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{selected.vitals.temp}</div>
-                      <span className="text-[10px] text-slate-400 font-semibold">Sensor Synced</span>
-                    </div>
-
-                    <div className="p-3.5 rounded-[16px] bg-cyan-50/60 border border-cyan-100">
-                      <div className="text-[10px] font-bold text-cyan-600">Oxygen Saturation</div>
-                      <div className="text-lg font-black text-slate-800 font-mono mt-0.5">{selected.vitals.spo2 || "99%"}</div>
-                      <span className="text-[10px] text-slate-400 font-semibold">SpO2 Level</span>
-                    </div>
-                  </div>
-
-                  <div className="p-3.5 rounded-[14px] bg-slate-50 border border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      Registered Phone
-                    </span>
-                    <p className="text-xs font-mono font-bold text-slate-700">{selected.phone || "Walk-In Patient"}</p>
-                  </div>
-                </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1568,22 +2130,35 @@ const Consultations: React.FC = () => {
               </p>
             </div>
 
-            <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80 text-left space-y-2 text-xs">
-              <div className="flex justify-between text-slate-500 font-bold">
-                <span>Patient:</span>
-                <span className="text-[#14213D]">{selected.name} ({selected.age}y)</span>
+            <div className="p-5 rounded-[20px] bg-slate-50 border border-slate-200/80 text-left space-y-3 text-xs">
+              <div className="flex justify-between items-center text-slate-500 font-bold pb-2 border-b border-slate-200/60">
+                <span>Patient Encounter:</span>
+                <span className="text-[#14213D] font-extrabold">{selected.name} ({selected.age}y · {selected.gender})</span>
               </div>
-              <div className="flex justify-between text-slate-500 font-bold">
-                <span>Diagnosis:</span>
-                <span className="text-[#14213D]">{clinicalDiagnosis || selected.condition}</span>
+              <div className="flex justify-between items-center text-slate-500 font-bold pb-2 border-b border-slate-200/60">
+                <span>Primary Diagnosis:</span>
+                <span className="text-[#14213D] font-extrabold">{clinicalDiagnosis || selected.condition}</span>
               </div>
-              <div className="flex justify-between text-slate-500 font-bold">
-                <span>Prescription:</span>
-                <span className="text-[#14213D]">{rxForm.medication} ({rxForm.frequency})</span>
-              </div>
-              <div className="flex justify-between text-slate-500 font-bold">
-                <span>Duration:</span>
-                <span className="text-[#14213D]">{rxForm.duration}</span>
+              <div className="space-y-1.5">
+                <span className="text-slate-500 font-bold block">Prescribed Medicines ({medications.length}):</span>
+                <div className="space-y-1">
+                  {medications.map((m, idx) => (
+                    <div key={m.id || idx} className="flex items-center justify-between p-2 rounded-[10px] bg-white border border-slate-200/80 text-[11px]">
+                      <span className="font-extrabold text-[#14213D]">
+                        {idx + 1}. {m.name}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Badge className="bg-slate-100 text-slate-700 text-[10px] font-bold px-1.5 py-0 border-none">
+                          {m.dosage}
+                        </Badge>
+                        <Badge className="bg-rose-50 text-rose-700 text-[10px] font-bold px-1.5 py-0 border-none">
+                          {m.frequency}
+                        </Badge>
+                        <span className="text-slate-400 font-mono text-[10px]">({m.duration})</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1596,17 +2171,15 @@ const Consultations: React.FC = () => {
                     patientName: selected.name,
                     bookingId: selected.bookingId,
                     diagnosis: clinicalDiagnosis || selected.condition,
-                    medications: [
-                      {
-                        name: rxForm.medication,
-                        dosage: rxForm.dosage,
-                        frequency: rxForm.frequency,
-                        duration: rxForm.duration,
-                        instructions: rxForm.instructions,
-                      },
-                    ],
-                    instructions: rxForm.instructions,
-                    duration: rxForm.duration,
+                    medications: medications.map((m) => ({
+                      name: m.name,
+                      dosage: m.dosage,
+                      frequency: m.frequency,
+                      duration: m.duration,
+                      instructions: m.instructions,
+                    })),
+                    instructions: medications[0]?.instructions || rxForm.instructions,
+                    duration: medications[0]?.duration || rxForm.duration,
                   })
                 }
                 className="rounded-[14px] h-11 px-5 text-xs font-bold border-slate-200 flex items-center gap-2"
@@ -1636,26 +2209,26 @@ const Consultations: React.FC = () => {
         /* ============================================================
             PHASE 1: THE CLINICAL WAITING ROOM & INTAKE (DEFAULT)
         ============================================================ */
-        <div className="space-y-6 animate-fadeIn">
+        <div className="space-y-4 animate-fadeIn">
           {/* Top Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/90 backdrop-blur-md p-5 rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)]">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white/90 backdrop-blur-md px-5 py-3 rounded-[20px] border border-slate-200/80 shadow-xs">
             <div className="flex items-center gap-3">
-              <div className="h-11 w-11 rounded-[16px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold">
+              <div className="h-10 w-10 rounded-[14px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold shrink-0">
                 <Stethoscope className="h-5 w-5" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-[#14213D] tracking-tight">Telehealth Virtual Clinic</h1>
+                <h1 className="text-lg font-black text-[#14213D] tracking-tight">Telehealth Virtual Clinic</h1>
                 <p className="text-xs text-slate-400 font-medium">
                   Clinical Intake, Patient Shared Health Reports & Encrypted Agora HD Suite
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant="outline"
                 onClick={() => setPermissionsModalOpen(true)}
-                className="rounded-[14px] h-9 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs flex items-center gap-1.5"
+                className="rounded-[12px] h-8.5 px-3 text-xs font-bold border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs flex items-center gap-1.5"
               >
                 <Camera className="h-3.5 w-3.5 text-[#35B7C9]" /> Device Check
               </Button>
@@ -1665,7 +2238,7 @@ const Consultations: React.FC = () => {
                 size="icon"
                 onClick={fetchConsultationsData}
                 disabled={loading}
-                className="rounded-[14px] h-9 w-9 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
+                className="rounded-[12px] h-8.5 w-8.5 border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs"
                 title="Refresh Intake Queue"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -1673,7 +2246,7 @@ const Consultations: React.FC = () => {
 
               <Button
                 onClick={() => setAddPatientOpen(true)}
-                className="rounded-[14px] h-9 px-4 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-xs flex items-center gap-1.5"
+                className="rounded-[12px] h-8.5 px-3.5 text-xs font-bold bg-[#14213D] hover:bg-[#1E2E4E] text-white shadow-xs flex items-center gap-1.5"
               >
                 <UserPlus className="h-3.5 w-3.5" /> Quick Register Walk-In
               </Button>
@@ -1681,9 +2254,9 @@ const Consultations: React.FC = () => {
           </div>
 
           {/* Split Waiting Room Stage (Left: Queue | Right: Dossier & Reports) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Queue Panel (5 cols) */}
-            <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-[24px] border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] p-4 space-y-3.5">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Left Queue Panel (5 cols on lg, 4 cols on xl) */}
+            <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-[22px] border border-slate-200/80 shadow-xs p-4 space-y-3.5">
               {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -1691,7 +2264,7 @@ const Consultations: React.FC = () => {
                   placeholder="Search patient, symptoms, phone..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 h-10 rounded-[14px] bg-slate-50 border-slate-200 text-xs font-medium"
+                  className="pl-10 h-9.5 rounded-[12px] bg-slate-50 border-slate-200 text-xs font-medium"
                 />
               </div>
 
@@ -1705,16 +2278,24 @@ const Consultations: React.FC = () => {
                     return false;
                   }).length;
 
+                  const isActive = queueTab === tab;
+
                   return (
                     <button
                       key={tab}
-                      onClick={() => setQueueTab(tab)}
+                      onClick={() => handleSelectQueueTab(tab)}
                       className={`flex-1 py-1.5 rounded-[11px] transition-all text-center flex items-center justify-center gap-1.5 ${
-                        queueTab === tab ? "bg-white text-[#14213D] shadow-sm font-extrabold" : "hover:text-[#14213D]"
+                        isActive ? "bg-white text-[#14213D] shadow-sm font-extrabold" : "hover:text-[#14213D]"
                       }`}
                     >
                       <span>{tab}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/70 text-slate-600 font-mono">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono transition-colors ${
+                          isActive
+                            ? "bg-[#14213D] text-white"
+                            : "bg-slate-200/70 text-slate-600"
+                        }`}
+                      >
                         {count}
                       </span>
                     </button>
@@ -1787,47 +2368,85 @@ const Consultations: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Card Action Controls: Admit / Postpone / Reject */}
-                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                        {/* Card Action Controls: Only for Active / Scheduled / Waiting patients */}
+                        <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1.5">
                           <span className="font-mono text-slate-500 text-[11px] flex items-center gap-1">
-                            <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
+                            {p.vitals.hasRealKioskData && p.vitals.bp ? (
+                              <>
+                                <Heart className="h-3 w-3 text-rose-500" /> {p.vitals.bp}
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium">Remote Consult</span>
+                            )}
                           </span>
 
-                          <div className="flex items-center gap-1.5">
-                            {/* Postpone button */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => handleOpenPostpone(p, e)}
-                              className="h-6 px-2 text-[10px] font-bold text-amber-600 hover:bg-amber-50 rounded-[6px]"
-                              title="Postpone consultation"
-                            >
-                              <CalendarClock className="h-3 w-3 mr-0.5" /> Postpone
-                            </Button>
+                          {p.status === "Completed" ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-500" /> Completed
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelected(p);
+                                  openPrescriptionPdf({
+                                    patientName: p.name,
+                                    bookingId: p.bookingId,
+                                    diagnosis: p.condition,
+                                    medications: [],
+                                    instructions: "Consultation encounter completed and documented.",
+                                    duration: "Completed",
+                                  });
+                                }}
+                                className="h-6 px-2 text-[10px] font-bold text-slate-600 hover:text-[#14213D] hover:bg-slate-100 rounded-[6px] flex items-center gap-1"
+                                title="View official prescription slip"
+                              >
+                                <Printer className="h-3 w-3 text-[#F2052C]" /> View Rx
+                              </Button>
+                            </div>
+                          ) : p.status === "Cancelled" ? (
+                            <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-rose-200">
+                              <Ban className="h-3 w-3 text-rose-500" /> Declined
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              {/* Postpone button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => handleOpenPostpone(p, e)}
+                                className="h-6 px-2 text-[10px] font-bold text-amber-600 hover:bg-amber-50 rounded-[6px]"
+                                title="Postpone consultation"
+                              >
+                                <CalendarClock className="h-3 w-3 mr-0.5" /> Postpone
+                              </Button>
 
-                            {/* Reject button */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={(e) => handleOpenReject(p, e)}
-                              className="h-6 px-2 text-[10px] font-bold text-rose-600 hover:bg-rose-50 rounded-[6px]"
-                              title="Decline consultation"
-                            >
-                              <Ban className="h-3 w-3 mr-0.5" /> Decline
-                            </Button>
+                              {/* Reject button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => handleOpenReject(p, e)}
+                                className="h-6 px-2 text-[10px] font-bold text-rose-600 hover:bg-rose-50 rounded-[6px]"
+                                title="Decline consultation"
+                              >
+                                <Ban className="h-3 w-3 mr-0.5" /> Decline
+                              </Button>
 
-                            {/* Admit button */}
-                            <Button
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAdmitPatient(p);
-                              }}
-                              className="h-6 px-2.5 text-[10px] font-black bg-[#F2052C] hover:bg-[#D00424] text-white rounded-[6px] shadow-xs flex items-center gap-1"
-                            >
-                              <Video className="h-3 w-3" /> Admit
-                            </Button>
-                          </div>
+                              {/* Admit button */}
+                              <Button
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAdmitPatient(p);
+                                }}
+                                className="h-6 px-2.5 text-[10px] font-black bg-[#F2052C] hover:bg-[#D00424] text-white rounded-[6px] shadow-xs flex items-center gap-1"
+                              >
+                                <Video className="h-3 w-3" /> Admit
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1837,24 +2456,24 @@ const Consultations: React.FC = () => {
             </div>
 
             {/* Right Dossier Panel (7 cols / 8 cols) */}
-            <div className="lg:col-span-7 xl:col-span-8 space-y-5">
+            <div className="lg:col-span-7 xl:col-span-8 space-y-4">
               {selected ? (
-                <div className="space-y-5 animate-fadeIn">
+                <div className="space-y-4 animate-fadeIn">
                   {/* Selected Patient Identity & Start Consultation Banner */}
-                  <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-6 text-white shadow-xl border border-white/10">
+                  <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-r from-[#14213D] via-[#1A2E56] to-[#14213D] p-5 text-white shadow-xl border border-white/10">
                     <div className="absolute top-0 right-0 -mr-12 -mt-12 w-56 h-56 rounded-full bg-[#F2052C]/20 blur-3xl pointer-events-none" />
 
-                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                      <div className="flex items-start sm:items-center gap-4">
-                        <div className="h-16 w-16 rounded-[20px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
-                          <div className="h-full w-full rounded-[18px] bg-[#14213D] flex items-center justify-center font-black text-xl text-white">
+                    <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5">
+                        <div className="h-14 w-14 rounded-[18px] bg-gradient-to-br from-[#F2052C] to-[#35B7C9] p-0.5 shadow-lg shrink-0">
+                          <div className="h-full w-full rounded-[16px] bg-[#14213D] flex items-center justify-center font-black text-lg text-white">
                             {selected.avatar}
                           </div>
                         </div>
 
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h2 className="text-xl sm:text-2xl font-black tracking-tight">{selected.name}</h2>
+                            <h2 className="text-xl font-black tracking-tight">{selected.name}</h2>
                             <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                               <ShieldCheck className="h-3 w-3 text-emerald-400" /> Patient Dossier Active
                             </Badge>
@@ -1866,175 +2485,279 @@ const Consultations: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Doctor Action Controls: Admit / Postpone / Reject */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Button
-                          variant="outline"
-                          onClick={() => handleOpenPostpone(selected)}
-                          className="rounded-[14px] h-10 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
-                        >
-                          <CalendarClock className="h-4 w-4 text-amber-300" /> Postpone
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          onClick={() => handleOpenReject(selected)}
-                          className="rounded-[14px] h-10 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
-                        >
-                          <Ban className="h-4 w-4 text-rose-400" /> Reject
-                        </Button>
-
-                        <Button
-                          onClick={() => handleAdmitPatient(selected)}
-                          className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[14px] h-10 px-5 border-none shadow-xl shadow-[#F2052C]/30 text-xs flex items-center gap-2 transform active:scale-95 transition-all"
-                        >
-                          <Video className="h-4.5 w-4.5" /> Admit to Video Room
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Kiosk Telemetry Cards */}
-                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-extrabold text-[#14213D] flex items-center gap-2">
-                        <Activity className="h-4.5 w-4.5 text-[#F2052C]" /> Real-Time Kiosk IoT Telemetry
-                      </h3>
-                      <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono">
-                        Hardware Live Synced
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      <div className="p-4 rounded-[18px] bg-rose-50/50 border border-rose-100/80 space-y-1">
-                        <span className="text-xs text-rose-600 font-bold block">Blood Pressure</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.bp}</div>
-                        <span className="text-[10px] font-semibold text-rose-500">mmHg</span>
-                      </div>
-
-                      <div className="p-4 rounded-[18px] bg-emerald-50/50 border border-emerald-100/80 space-y-1">
-                        <span className="text-xs text-emerald-600 font-bold block">Heart Rate</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.pulse} bpm</div>
-                        <span className="text-[10px] font-semibold text-emerald-500">Normal Rhythm</span>
-                      </div>
-
-                      <div className="p-4 rounded-[18px] bg-amber-50/50 border border-amber-100/80 space-y-1">
-                        <span className="text-xs text-amber-600 font-bold block">Body Temp</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.temp}</div>
-                        <span className="text-[10px] font-semibold text-amber-500">Sensor Synced</span>
-                      </div>
-
-                      <div className="p-4 rounded-[18px] bg-cyan-50/50 border border-cyan-100/80 space-y-1">
-                        <span className="text-xs text-cyan-600 font-bold block">Oxygen Saturation</span>
-                        <div className="text-xl font-black text-slate-800 font-mono">{selected.vitals.spo2 || "99%"}</div>
-                        <span className="text-[10px] font-semibold text-cyan-500">SpO2 Level</span>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                        Chief Complaint & Case Notes
-                      </span>
-                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">
-                        {selected.notes || "Routine telehealth wellness consultation requested."}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Patient Shared Health Reports Section (Displayed in Appointment Details) */}
-                  <div className="bg-white rounded-[24px] border border-slate-200/80 p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="h-9 w-9 rounded-[12px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold">
-                          <FileCheck2 className="h-5 w-5" />
+                      {/* Doctor Action Controls: Only for Active / Scheduled / Waiting patients */}
+                      {selected.status === "Completed" ? (
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold px-3 py-1.5 rounded-[12px] flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Consultation Finished
+                          </Badge>
+                          <Button
+                            onClick={() =>
+                              openPrescriptionPdf({
+                                patientName: selected.name,
+                                bookingId: selected.bookingId,
+                                diagnosis: selected.condition,
+                                medications: medications.map((m) => ({
+                                  name: m.name,
+                                  dosage: m.dosage,
+                                  frequency: m.frequency,
+                                  duration: m.duration,
+                                  instructions: m.instructions,
+                                })),
+                                instructions: rxForm.instructions,
+                                duration: rxForm.duration,
+                              })
+                            }
+                            className="bg-white/10 hover:bg-white/20 text-white font-bold rounded-[12px] h-9 px-4 border border-white/20 text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                          >
+                            <Printer className="h-3.5 w-3.5 text-[#35B7C9]" /> View / Print Prescription Slip
+                          </Button>
                         </div>
-                        <div>
-                          <h3 className="text-base font-extrabold text-[#14213D]">
-                            Patient Shared Health Reports & Attachments
-                          </h3>
-                          <p className="text-xs text-slate-400">
-                            Diagnostic files, previous prescriptions, and lab tests submitted by the patient
+                      ) : selected.status === "Cancelled" ? (
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold px-3 py-1.5 rounded-[12px] flex items-center gap-1.5">
+                            <Ban className="h-4 w-4 text-rose-400" /> Consultation Request Declined
+                          </Badge>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            onClick={() => handleOpenPostpone(selected)}
+                            className="rounded-[12px] h-9 px-3.5 bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-bold flex items-center gap-1.5"
+                          >
+                            <CalendarClock className="h-3.5 w-3.5 text-amber-300" /> Postpone
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            onClick={() => handleOpenReject(selected)}
+                            className="rounded-[12px] h-9 px-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-bold flex items-center gap-1.5"
+                          >
+                            <Ban className="h-3.5 w-3.5 text-rose-400" /> Reject
+                          </Button>
+
+                          <Button
+                            onClick={() => handleAdmitPatient(selected)}
+                            className="bg-gradient-to-r from-[#F2052C] to-[#FF4B66] hover:opacity-90 text-white font-black rounded-[12px] h-9 px-4.5 border-none shadow-lg shadow-[#F2052C]/30 text-xs flex items-center gap-1.5 transform active:scale-95 transition-all"
+                          >
+                            <Video className="h-4 w-4" /> Admit to Video Room
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Balanced 2-Column Clinical Dossier (Left: Intake & Details | Right: Patient Shared Reports) */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+                    {/* Left Sub-Column: Clinical Intake & Consultation Context (5 cols) */}
+                    <div className="xl:col-span-5 space-y-3">
+                      <div className="bg-white rounded-[20px] border border-slate-200/80 p-4 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-[#14213D] uppercase tracking-wider flex items-center gap-1.5">
+                            <Stethoscope className="h-3.5 w-3.5 text-[#F2052C]" /> Clinical Intake
+                          </span>
+                          <Badge className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
+                            {selected.status === "Completed"
+                              ? "Consultation Completed"
+                              : selected.type === "instant"
+                              ? "Instant Queue"
+                              : selected.slotTime
+                              ? `Slot: ${selected.slotTime}`
+                              : "Scheduled"}
+                          </Badge>
+                        </div>
+
+                        <div className="p-3 rounded-[14px] bg-slate-50 border border-slate-100 space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Primary Clinical Concern
+                          </span>
+                          <p className="text-xs font-bold text-slate-800 leading-snug">
+                            {selected.condition}
                           </p>
                         </div>
+
+                        <div className="p-3 rounded-[14px] bg-slate-50/80 border border-slate-100 space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-slate-500 font-medium">
+                            <span>Consultation Mode:</span>
+                            <span className="font-bold text-[#14213D]">
+                              {selected.type === "instant" ? "Instant Video" : "Scheduled Telehealth"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-500 font-medium">
+                            <span>Patient Contact:</span>
+                            <span className="font-mono font-bold text-slate-800">
+                              {selected.phone || "Not specified"}
+                            </span>
+                          </div>
+                          {selected.bookingId && (
+                            <div className="flex items-center justify-between text-slate-500 font-medium">
+                              <span>Booking Reference:</span>
+                              <span className="font-mono text-slate-600">
+                                #{String(selected.bookingId).slice(-6)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {selected.notes &&
+                          selected.notes.trim() !== `Chief complaint: ${selected.condition}` &&
+                          selected.notes.trim() !== selected.condition && (
+                            <div className="space-y-1 pt-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                                Patient Notes / Remarks
+                              </span>
+                              <p className="text-[11px] font-medium text-slate-600 bg-slate-50/70 p-2.5 rounded-[12px] border border-slate-100 leading-relaxed">
+                                {selected.notes}
+                              </p>
+                            </div>
+                          )}
+                      </div>
+                    </div>
+
+                    {/* Right Sub-Column: Patient Shared Health Reports & Attachments (7 cols) */}
+                    <div className="xl:col-span-7 bg-white rounded-[18px] border border-slate-200/80 p-3.5 shadow-xs space-y-3">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded-[10px] bg-[#35B7C9]/10 text-[#35B7C9] flex items-center justify-center font-bold shrink-0">
+                            <FileCheck2 className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <h3 className="text-xs font-black text-[#14213D]">
+                                Shared Health Reports & Files
+                              </h3>
+                              {sharedReports.length > 0 && (
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold">
+                                  {sharedReports.length} {sharedReports.length === 1 ? "file" : "files"}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                              Diagnostic scans, lab tests & prescriptions submitted by patient
+                            </p>
+                          </div>
+                        </div>
+
+                        {sharedReportsStatus === "declaration_required" ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-500 hover:bg-amber-600 text-white rounded-[8px] text-[10px] font-bold h-7 px-2.5 flex items-center gap-1 shadow-xs"
+                          >
+                            <Lock className="h-3 w-3" /> Unlock Records
+                          </Button>
+                        ) : sharedReportsStatus === "unlocked" && sharedReports.length > 0 ? (
+                          <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                            <Unlock className="h-3 w-3 text-emerald-600" /> NMC / ABDM Verified
+                          </Badge>
+                        ) : null}
                       </div>
 
                       {sharedReportsStatus === "declaration_required" ? (
-                        <Button
-                          size="sm"
-                          onClick={() => setDeclarationModalOpen(true)}
-                          className="bg-amber-500 hover:bg-amber-600 text-white rounded-[12px] text-xs font-bold h-8"
-                        >
-                          <Lock className="h-3 w-3 mr-1" /> Unlock Records
-                        </Button>
+                        <div className="p-4 rounded-[14px] bg-amber-50/70 border border-amber-200/80 text-center space-y-2">
+                          <div className="h-8 w-8 rounded-xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center shadow-xs">
+                            <Lock className="h-4 w-4" />
+                          </div>
+                          <div className="space-y-0.5">
+                            <h4 className="text-xs font-extrabold text-amber-950">
+                              Patient Medical History Locked (ABDM / NMC Compliance)
+                            </h4>
+                            <p className="text-[10px] text-amber-800/80 max-w-sm mx-auto leading-relaxed">
+                              Under National Medical Commission (NMC) Telemedicine Practice Guidelines, accept declaration to decrypt records.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => setDeclarationModalOpen(true)}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-[8px] text-xs h-7.5 px-3 shadow-xs inline-flex items-center gap-1.5"
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" /> Sign Compliance Declaration & Unlock
+                          </Button>
+                        </div>
+                      ) : sharedReportsStatus === "loading" ? (
+                        <div className="p-6 text-center bg-slate-50/70 rounded-[14px] border border-slate-200/80 space-y-1.5">
+                          <RefreshCw className="h-4 w-4 text-[#35B7C9] animate-spin mx-auto" />
+                          <p className="text-xs font-bold text-slate-700">Verifying ABDM Consent & Loading Records...</p>
+                        </div>
+                      ) : sharedReports.length > 0 ? (
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                          {sharedReports.map((r) => (
+                            <div
+                              key={r.id}
+                              className="p-3 rounded-[14px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-1.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="h-7.5 w-7.5 rounded-[8px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                                    <FileText className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="text-xs font-black text-[#14213D] leading-tight truncate">
+                                      {r.title}
+                                    </h4>
+                                    <span className="text-[10px] text-slate-400 font-semibold">
+                                      {r.type} · {r.date}
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50/80 p-1.5 rounded-[8px] border border-slate-100">
+                                {r.summary}
+                              </p>
+
+                              <div className="flex items-center justify-between pt-0.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (r.fileUrl && r.fileUrl !== "#") {
+                                      window.open(r.fileUrl, "_blank");
+                                    } else {
+                                      setPreviewReport(r);
+                                    }
+                                  }}
+                                  className="h-7 px-2.5 text-xs font-bold rounded-[8px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1"
+                                >
+                                  <ExternalLink className="h-3 w-3 text-[#35B7C9]" /> Inspect File
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    if (r.fileUrl && r.fileUrl !== "#") {
+                                      window.open(r.fileUrl, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Download Link Unavailable",
+                                        description: `Direct storage URL for ${r.title} was not provided with this record.`,
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                  className="h-7 px-2.5 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[8px] flex items-center gap-1"
+                                >
+                                  <Download className="h-3 w-3" /> Download
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       ) : (
-                        <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
-                          <Unlock className="h-3 w-3 mr-1 text-emerald-600" /> NMC / ABDM Verified
-                        </Badge>
+                        <div className="p-6 text-center bg-slate-50/70 rounded-[14px] border border-dashed border-slate-200/90 space-y-1">
+                          <div className="h-8 w-8 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                            <FileText className="h-4 w-4" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-700">No Patient Health Reports Shared</p>
+                          <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
+                            The patient has not attached prior diagnostic scans, lab reports, or previous prescriptions for this booking.
+                          </p>
+                        </div>
                       )}
                     </div>
-
-                    {sharedReports.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                        {sharedReports.map((r) => (
-                          <div
-                            key={r.id}
-                            className="p-4 rounded-[18px] border border-slate-200/90 bg-white hover:border-[#35B7C9] transition-all shadow-xs space-y-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-center gap-2.5">
-                                <div className="h-9 w-9 rounded-[12px] bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-                                  <FileText className="h-5 w-5" />
-                                </div>
-                                <div>
-                                  <h4 className="text-xs font-black text-[#14213D] leading-tight line-clamp-1">
-                                    {r.title}
-                                  </h4>
-                                  <span className="text-[10px] text-slate-400 font-semibold">
-                                    {r.type} · {r.date}
-                                  </span>
-                                </div>
-                              </div>
-                              <span className="text-[10px] font-mono text-slate-400 shrink-0">{r.fileSize}</span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 bg-slate-50 p-2.5 rounded-[12px] border border-slate-100">
-                              {r.summary}
-                            </p>
-
-                            <div className="flex items-center justify-between pt-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setPreviewReport(r)}
-                                className="h-8 text-xs font-bold rounded-[10px] border-slate-200 text-[#14213D] hover:bg-slate-50 flex items-center gap-1.5"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5 text-[#35B7C9]" /> Inspect File
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  toast({
-                                    title: "Downloading File",
-                                    description: `Saved ${r.title} to local workstation.`,
-                                  });
-                                }}
-                                className="h-8 text-xs font-bold text-slate-600 hover:text-[#14213D] rounded-[10px] flex items-center gap-1"
-                              >
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="p-8 text-center bg-slate-50 rounded-[18px] border border-dashed border-slate-200">
-                        <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                        <p className="text-xs font-bold text-slate-600">No medical files attached for this booking</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Patient has not uploaded external lab records.</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               ) : (
@@ -2232,7 +2955,7 @@ const Consultations: React.FC = () => {
                 ABDM Verified digital signature. Certified authentic by diagnostic laboratory.
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="outline"
@@ -2245,13 +2968,25 @@ const Consultations: React.FC = () => {
                   <Plus className="h-3.5 w-3.5 mr-1" /> Append to SOAP Notes
                 </Button>
 
-                <Button
-                  size="sm"
-                  onClick={() => setPreviewReport(null)}
-                  className="rounded-[12px] h-9 px-4 text-xs font-bold bg-[#14213D] text-white"
-                >
-                  Close Document
-                </Button>
+                <div className="flex items-center gap-2">
+                  {previewReport.fileUrl && previewReport.fileUrl !== "#" && (
+                    <Button
+                      size="sm"
+                      onClick={() => window.open(previewReport.fileUrl, "_blank")}
+                      className="rounded-[12px] h-9 px-3 text-xs font-bold bg-[#35B7C9] hover:bg-[#2ca2b3] text-white flex items-center gap-1.5"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Original File
+                    </Button>
+                  )}
+
+                  <Button
+                    size="sm"
+                    onClick={() => setPreviewReport(null)}
+                    className="rounded-[12px] h-9 px-4 text-xs font-bold bg-[#14213D] text-white"
+                  >
+                    Close Document
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -2273,10 +3008,8 @@ const Consultations: React.FC = () => {
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
-            <div className="p-3.5 rounded-[16px] bg-slate-50 border border-slate-200/80 text-xs text-slate-700 leading-relaxed">
-              In accordance with NMC/ABDM Telemedicine Practice Guidelines and patient privacy regulations, I declare
-              that I will access and use this patient's medical records strictly for the purpose of this clinical
-              consultation. I agree to keep all patient health information confidential.
+            <div className="p-3.5 rounded-[16px] bg-slate-50 border border-slate-200/80 text-xs text-slate-700 leading-relaxed font-medium">
+              {declarationText}
             </div>
 
             <div className="flex items-center gap-2.5">
@@ -2301,9 +3034,17 @@ const Consultations: React.FC = () => {
               <Button
                 onClick={handleAgreeDeclaration}
                 disabled={!agreementChecked || agreeingDeclaration}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-[14px] h-9 px-4 text-xs font-bold shadow-sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-[14px] h-9 px-4 text-xs font-bold shadow-sm flex items-center gap-1.5"
               >
-                {agreeingDeclaration ? "Decrypting…" : "Accept & Unlock"}
+                {agreeingDeclaration ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Decrypting...
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-3.5 w-3.5" /> Accept & Unlock
+                  </>
+                )}
               </Button>
             </div>
           </div>
@@ -2434,6 +3175,142 @@ const Consultations: React.FC = () => {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============================================================
+          IN-CALL PRESCRIPTION PREVIEW DIALOG
+      ============================================================ */}
+      <Dialog open={previewRxModalOpen} onOpenChange={setPreviewRxModalOpen}>
+        <DialogContent className="max-w-2xl rounded-[28px] p-6 bg-white border border-slate-100 shadow-2xl">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-[14px] bg-[#F2052C]/10 text-[#F2052C] flex items-center justify-center font-bold">
+                  <Pill className="h-5 w-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-base font-extrabold text-[#14213D]">
+                    Digital Prescription Slip Preview
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-400 font-medium">
+                    Certified NMC / ABDM Compliant Telemedicine Prescription
+                  </DialogDescription>
+                </div>
+              </div>
+
+              <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                <ShieldCheck className="h-3.5 w-3.5 mr-1 text-emerald-600" /> Tamper-Proof
+              </Badge>
+            </div>
+          </DialogHeader>
+
+          {selected && (
+            <div className="space-y-4 pt-3">
+              {/* Header Slip Details */}
+              <div className="p-4 rounded-[18px] bg-slate-50 border border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Patient</span>
+                  <p className="font-extrabold text-[#14213D]">{selected.name}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Age / Gender</span>
+                  <p className="font-extrabold text-[#14213D]">{selected.age}y · {selected.gender}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Date</span>
+                  <p className="font-extrabold text-[#14213D]">{new Date().toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Ref Code</span>
+                  <p className="font-mono font-bold text-slate-600">{selected.bookingId?.slice(-6) || "Active"}</p>
+                </div>
+              </div>
+
+              {/* Diagnosis & Clinical Summary */}
+              <div className="p-3.5 rounded-[16px] bg-white border border-slate-200 space-y-1.5 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Clinical Diagnosis</span>
+                <p className="text-sm font-black text-[#14213D]">{clinicalDiagnosis || selected.condition}</p>
+                {clinicalNotes && (
+                  <p className="text-xs text-slate-600 pt-1 border-t border-slate-100 font-medium leading-relaxed">
+                    {clinicalNotes}
+                  </p>
+                )}
+              </div>
+
+              {/* Prescribed Medications Table */}
+              <div className="space-y-2">
+                <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
+                  Prescribed Medicines ({medications.length})
+                </span>
+
+                <div className="rounded-[16px] border border-slate-200 overflow-hidden text-xs">
+                  <div className="grid grid-cols-12 bg-slate-100/80 px-3 py-2 font-black text-slate-600 text-[11px]">
+                    <div className="col-span-5">Drug Formulation</div>
+                    <div className="col-span-2 text-center">Dosage</div>
+                    <div className="col-span-3">Frequency</div>
+                    <div className="col-span-2 text-right">Duration</div>
+                  </div>
+
+                  <div className="divide-y divide-slate-100">
+                    {medications.map((m, idx) => (
+                      <div key={m.id || idx} className="grid grid-cols-12 px-3 py-2.5 items-center font-medium">
+                        <div className="col-span-5">
+                          <span className="font-bold text-[#14213D] block">{m.name}</span>
+                          <span className="text-[10px] text-slate-400">{m.instructions}</span>
+                        </div>
+                        <div className="col-span-2 text-center font-semibold text-slate-700">{m.dosage}</div>
+                        <div className="col-span-3 text-slate-700">{m.frequency}</div>
+                        <div className="col-span-2 text-right font-mono font-bold text-slate-700">{m.duration}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Legal Telemedicine Seal */}
+              <div className="p-3 rounded-[14px] bg-emerald-50/70 border border-emerald-200 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span className="text-emerald-800 font-semibold text-[11px]">
+                    Electronically signed via registered physician cryptographic keys. Valid under NMC guidelines.
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    openPrescriptionPdf({
+                      patientName: selected.name,
+                      bookingId: selected.bookingId,
+                      diagnosis: clinicalDiagnosis || selected.condition,
+                      medications: medications.map((m) => ({
+                        name: m.name,
+                        dosage: m.dosage,
+                        frequency: m.frequency,
+                        duration: m.duration,
+                        instructions: m.instructions,
+                      })),
+                      instructions: medications[0]?.instructions || rxForm.instructions,
+                      duration: medications[0]?.duration || rxForm.duration,
+                    })
+                  }
+                  className="rounded-[12px] h-9 text-xs font-bold border-slate-200 flex items-center gap-1.5"
+                >
+                  <Printer className="h-4 w-4 text-[#F2052C]" /> Print PDF Slip
+                </Button>
+
+                <Button
+                  onClick={() => setPreviewRxModalOpen(false)}
+                  className="rounded-[12px] h-9 px-5 text-xs font-bold bg-[#14213D] text-white"
+                >
+                  Close Preview
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
